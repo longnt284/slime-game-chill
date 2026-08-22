@@ -1,7 +1,14 @@
+import { useEffect, useRef, useState } from "react";
 import type { GameStats, HudData } from "../game/engine";
 import type { Choice } from "../game/data";
 import { TOTAL_STAGES } from "../game/data";
+import type { HeroSkinDef, SaveData, WeaponSkinDef } from "../game/shop";
+import { HERO_SKINS, WEAPON_SKINS, TIER_COLORS, TIER_NAMES } from "../game/shop";
+import { getHeroSprite } from "../game/sprites";
 import { Icon } from "./icons";
+
+export const IS_TOUCH =
+  typeof window !== "undefined" && (navigator.maxTouchPoints > 0 || "ontouchstart" in window);
 
 /* ================= HUD ================= */
 
@@ -9,17 +16,19 @@ export function HUD({
   hud,
   onPause,
   onMute,
+  touch,
 }: {
   hud: HudData;
   onPause: () => void;
   onMute: () => void;
+  touch: boolean;
 }) {
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const xpPct = Math.max(0, Math.min(100, (hud.xp / hud.xpNeed) * 100));
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {/* trái trên: máu + kinh nghiệm */}
-      <div className="absolute top-3 left-3 panel px-3 py-2 w-[300px] max-w-[62vw]">
+      <div className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "w-[240px] max-w-[56vw]" : "w-[300px] max-w-[62vw]"}`}>
         <div className="flex items-center gap-2">
           <Icon name="heart" className="w-5 h-5 text-[#ff4d6d] shrink-0" />
           <div className="bar-outer flex-1 h-[18px]">
@@ -46,10 +55,14 @@ export function HUD({
           <span className="font-display text-[13px] text-[#ffd94a]">
             MÀN {hud.stage}/{TOTAL_STAGES}
           </span>
-          <span className="w-px h-4 bg-[#6b4423]" />
-          <span className="text-[13px] text-[#d9bd8a] font-semibold">{hud.biomeName}</span>
-          <span className="w-px h-4 bg-[#6b4423]" />
-          <span className="text-[13px] tabular-nums text-[#ffe9b8]">{hud.time}</span>
+          {!touch && (
+            <>
+              <span className="w-px h-4 bg-[#6b4423]" />
+              <span className="text-[13px] text-[#d9bd8a] font-semibold">{hud.biomeName}</span>
+              <span className="w-px h-4 bg-[#6b4423]" />
+              <span className="text-[13px] tabular-nums text-[#ffe9b8]">{hud.time}</span>
+            </>
+          )}
         </div>
 
         {!hud.bossActive ? (
@@ -68,7 +81,7 @@ export function HUD({
               />
             ))}
             <Icon name="skull" className={`w-4 h-4 ${hud.wave >= 4 ? "text-[#ff4d6d] blink-soft" : "text-[#6b4423]"}`} />
-            <div className="bar-outer w-36 h-[9px] ml-1">
+            <div className={`bar-outer h-[9px] ml-1 ${touch ? "w-20" : "w-36"}`}>
               <div
                 className="bar-fill"
                 style={{
@@ -82,7 +95,7 @@ export function HUD({
             </span>
           </div>
         ) : (
-          <div className="panel px-3 py-1.5 w-[460px] max-w-[86vw]">
+          <div className={`panel px-3 py-1.5 ${touch ? "w-[300px]" : "w-[460px]"} max-w-[86vw]`}>
             <div className="flex items-center justify-between mb-1">
               <span className="flex items-center gap-1.5 font-display text-[11px] text-[#ff8095]">
                 <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
@@ -111,9 +124,11 @@ export function HUD({
           <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
             <Icon name={hud.muted ? "mute" : "sound"} className="w-4 h-4" />
           </button>
-          <button onClick={onPause} className="btn-ghost !px-2.5 !py-1.5" title="Tạm dừng (P)">
-            <Icon name="pause" className="w-4 h-4" />
-          </button>
+          {!touch && (
+            <button onClick={onPause} className="btn-ghost !px-2.5 !py-1.5" title="Tạm dừng (P)">
+              <Icon name="pause" className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <div className="panel-deep px-3 py-1.5 flex items-center gap-3 text-[13px] font-bold tabular-nums">
           <span className="flex items-center gap-1.5">
@@ -124,37 +139,151 @@ export function HUD({
             <Icon name="core" className="w-4 h-4" />
             {hud.cores}
           </span>
+          <span className="flex items-center gap-1.5 text-[#ffd94a]">
+            <Icon name="coin" className="w-4 h-4" />
+            {hud.goldRun}
+          </span>
         </div>
       </div>
 
-      {/* trái dưới: kỹ năng */}
-      <div className="absolute bottom-3 left-3 flex gap-1.5 flex-wrap max-w-[60vw]">
+      {/* kỹ năng */}
+      <div className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[104px] left-3" : "bottom-3 left-3"}`}>
         {hud.skills.map((s) => (
           <div
             key={s.id}
             title={`${s.name} — Cấp ${s.lv}`}
-            className={`skill-chip panel-deep w-[52px] h-[52px] flex flex-col items-center justify-center relative ${s.evolved ? "evolved" : ""}`}
+            className={`skill-chip panel-deep ${touch ? "w-[42px] h-[42px]" : "w-[52px] h-[52px]"} flex flex-col items-center justify-center relative ${s.evolved ? "evolved" : ""}`}
           >
-            <Icon name={s.icon} className={`w-6 h-6 ${s.evolved ? "text-[#ffd94a]" : "text-[#ffe9b8]"}`} />
+            <Icon name={s.icon} className={`${touch ? "w-5 h-5" : "w-6 h-6"} ${s.evolved ? "text-[#ffd94a]" : "text-[#ffe9b8]"}`} />
             <span className="absolute bottom-0.5 right-1 text-[10px] font-bold text-[#7ce06a]">{s.lv}</span>
             {s.evolved && <Icon name="crown" className="absolute -top-2 -right-1 w-4 h-4 text-[#ffd94a]" />}
           </div>
         ))}
       </div>
 
-      {/* phải dưới: hướng dẫn */}
-      <div className="absolute bottom-3 right-3 panel-deep px-3 py-2 text-[11px] text-[#d9bd8a] flex items-center gap-2">
-        <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">W</span>
-        <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">A</span>
-        <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">S</span>
-        <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">D</span>
-        <span className="ml-1">Di chuyển • Nhân vật tự chiến đấu</span>
-        <span className="text-[#6b4423]">|</span>
-        <span>P: Dừng</span>
-        <span className="text-[#6b4423]">|</span>
-        <span>M: Tiếng</span>
+      {/* phải dưới: hướng dẫn (chỉ desktop) */}
+      {!touch && (
+        <div className="absolute bottom-3 right-3 panel-deep px-3 py-2 text-[11px] text-[#d9bd8a] flex items-center gap-2">
+          <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">W</span>
+          <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">A</span>
+          <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">S</span>
+          <span className="keycap !min-w-[22px] !h-[22px] !text-[9px]">D</span>
+          <span className="ml-1">Di chuyển • Nhân vật tự chiến đấu</span>
+          <span className="text-[#6b4423]">|</span>
+          <span>P: Dừng</span>
+          <span className="text-[#6b4423]">|</span>
+          <span>M: Tiếng</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================= JOYSTICK + NÚT CHẠM ================= */
+
+function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const [active, setActive] = useState(false);
+  const pid = useRef<number | null>(null);
+  const R = 50;
+
+  const update = (e: React.PointerEvent) => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    let dx = e.clientX - (r.left + r.width / 2);
+    let dy = e.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy);
+    if (d > R) {
+      dx = (dx / d) * R;
+      dy = (dy / d) * R;
+    }
+    setKnob({ x: dx, y: dy });
+    onMove(dx / R, dy / R);
+  };
+  const end = () => {
+    pid.current = null;
+    setActive(false);
+    setKnob({ x: 0, y: 0 });
+    onMove(0, 0);
+  };
+
+  return (
+    <div className="absolute bottom-6 left-5 z-20 pointer-events-auto select-none" style={{ touchAction: "none" }}>
+      <div
+        ref={ref}
+        onPointerDown={(e) => {
+          pid.current = e.pointerId;
+          setActive(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          update(e);
+        }}
+        onPointerMove={(e) => {
+          if (pid.current === e.pointerId) update(e);
+        }}
+        onPointerUp={(e) => {
+          if (pid.current === e.pointerId) end();
+        }}
+        onPointerCancel={end}
+        className="relative w-[136px] h-[136px] rounded-full panel-deep"
+        style={{ boxShadow: "inset 0 0 0 3px #6b4423, 0 6px 0 rgba(0,0,0,.45)" }}
+      >
+        <div className="absolute inset-3 rounded-full border-2 border-dashed border-[#6b4423]/70" />
+        <div className="absolute inset-0 flex items-center justify-center text-[#6b4423] font-display text-[10px] tracking-widest">
+          {active ? "" : "DI CHUYỂN"}
+        </div>
+        <div
+          className="absolute w-[58px] h-[58px] rounded-full"
+          style={{
+            left: "50%",
+            top: "50%",
+            transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))`,
+            transition: active ? "none" : "transform .18s cubic-bezier(.2,1.4,.4,1)",
+            background: "linear-gradient(180deg,#ffe08a 0%,#f2b53c 55%,#d9932a 100%)",
+            border: "3px solid #7a4d22",
+            boxShadow: "inset 0 3px 0 rgba(255,255,255,.45), inset 0 -5px 0 rgba(122,60,10,.35), 0 3px 0 rgba(0,0,0,.5)",
+          }}
+        />
       </div>
     </div>
+  );
+}
+
+export function TouchControls({
+  onMove,
+  onPause,
+  onMute,
+  muted,
+}: {
+  onMove: (x: number, y: number) => void;
+  onPause: () => void;
+  onMute: () => void;
+  muted: boolean;
+}) {
+  useEffect(() => {
+    return () => onMove(0, 0);
+  }, [onMove]);
+  return (
+    <>
+      <Joystick onMove={onMove} />
+      <div className="absolute bottom-6 right-5 z-20 pointer-events-auto flex items-end gap-3" style={{ touchAction: "none" }}>
+        <button
+          onClick={onMute}
+          className="w-12 h-12 rounded-full btn-ghost !p-0 flex items-center justify-center"
+          title="Âm thanh"
+        >
+          <Icon name={muted ? "mute" : "sound"} className="w-5 h-5" />
+        </button>
+        <button
+          onClick={onPause}
+          className="w-16 h-16 rounded-full btn !p-0 flex items-center justify-center"
+          title="Tạm dừng"
+        >
+          <Icon name="pause" className="w-6 h-6" />
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -175,7 +304,7 @@ export function Banner({ banner }: { banner: { text: string; sub: string; key: n
 
 /* ================= MENU ================= */
 
-export function MenuScreen({ onStart }: { onStart: () => void }) {
+export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onShop: () => void; gold: number }) {
   const best = parseInt(localStorage.getItem("tvqv_best") || "0", 10);
   return (
     <div className="absolute inset-0 z-30 flex items-stretch justify-between bg-gradient-to-r from-[#140d06f2] via-[#140d06c8] to-[#140d0640]">
@@ -191,25 +320,33 @@ export function MenuScreen({ onStart }: { onStart: () => void }) {
           <span className="text-[#ff8095]">QUÁI VẬT</span>
         </h1>
         <p className="mt-6 text-[15px] md:text-base text-[#d9bd8a] leading-relaxed max-w-md">
-          Một mình giữa thung lũng, <b className="text-[#ffe9b8]">di chuyển bằng WASD</b> — nhân vật{" "}
+          Một mình giữa thung lũng, <b className="text-[#ffe9b8]">di chuyển bằng WASD</b> (hoặc cần ảo trên điện thoại) — nhân vật{" "}
           <b className="text-[#ffe9b8]">tự ra chiêu</b>. Dọn 3 đợt quái mỗi màn, hạ trùm, nhặt{" "}
-          <b className="text-[#63e6ff]">mảnh kỹ năng</b> và <b className="text-[#ff9d2e]">lõi tiến hóa</b> để mạnh lên qua{" "}
-          <b className="text-[#ffe9b8]">100 màn</b>.
+          <b className="text-[#63e6ff]">mảnh kỹ năng</b> và <b className="text-[#ff9d2e]">lõi tiến hóa</b>, cày{" "}
+          <b className="text-[#ffd94a]">vàng</b> sắm skin chất chơi.
         </p>
         <div className="mt-8 flex items-center gap-4 flex-wrap">
           <button onClick={onStart} className="btn text-xl flex items-center gap-3">
             <Icon name="play" className="w-5 h-5" />
             BẮT ĐẦU
           </button>
-          {best > 0 && (
-            <span className="panel-deep px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-[#ffd94a]">
-              <Icon name="crown" className="w-4 h-4" />
-              Kỷ lục: Màn {best}
-            </span>
-          )}
+          <button onClick={onShop} className="btn-ghost text-base flex items-center gap-2.5 !py-3.5">
+            <Icon name="bag" className="w-5 h-5 text-[#ffd94a]" />
+            CỬA HÀNG
+          </button>
+          <span className="panel-deep px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-[#ffd94a]">
+            <Icon name="coin" className="w-5 h-5" />
+            {gold.toLocaleString("vi")}
+          </span>
         </div>
-        <p className="mt-8 text-[11px] text-[#8a6a44]">
-          Đồ họa pixel & chuyển động lấy cảm hứng Stardew Valley • Phím P tạm dừng • M bật/tắt tiếng
+        {best > 0 && (
+          <p className="mt-5 text-[13px] text-[#d9bd8a] flex items-center gap-2">
+            <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
+            Kỷ lục: <b className="text-[#ffd94a]">Màn {best}</b> — sống càng lâu, vàng càng nhiều
+          </p>
+        )}
+        <p className="mt-6 text-[11px] text-[#8a6a44]">
+          Đồ họa pixel & chuyển động lấy cảm hứng Stardew Valley • P tạm dừng • M bật/tắt tiếng
         </p>
       </div>
 
@@ -223,7 +360,7 @@ export function MenuScreen({ onStart }: { onStart: () => void }) {
             <li className="flex items-center gap-2.5">
               <Icon name="wasd" className="w-5 h-5 text-[#7ce06a] shrink-0" />
               <span>
-                <b className="text-[#ffe9b8]">W A S D</b> / phím mũi tên để chạy — đánh là việc của nhân vật
+                <b className="text-[#ffe9b8]">W A S D</b> / cần ảo để chạy — đánh là việc của nhân vật
               </span>
             </li>
             <li className="flex items-center gap-2.5">
@@ -233,10 +370,10 @@ export function MenuScreen({ onStart }: { onStart: () => void }) {
               </span>
             </li>
             <li className="flex items-center gap-2.5">
-              <Icon name="core" className="w-5 h-5 text-[#ff9d2e] shrink-0" />
+              <Icon name="coin" className="w-5 h-5 text-[#ffd94a] shrink-0" />
               <span>
-                Quái rơi <b className="text-[#63e6ff]">ngọc kinh nghiệm</b>; trùm & quái tinh nhuệ rơi{" "}
-                <b className="text-[#ff9d2e]">lõi tiến hóa</b>
+                Sống sót mỗi giây, qua đợt, hạ trùm đều ra <b className="text-[#ffd94a]">vàng</b> — vào cửa hàng sắm{" "}
+                <b className="text-[#ffe9b8]">40 skin nhân vật</b> và <b className="text-[#ffe9b8]">20 skin vũ khí</b>
               </span>
             </li>
             <li className="flex items-center gap-2.5">
@@ -262,6 +399,194 @@ export function MenuScreen({ onStart }: { onStart: () => void }) {
                 <Icon name={s} className="w-6 h-6" />
               </div>
             ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================= SHOP ================= */
+
+function HeroPreview({ skin }: { skin: HeroSkinDef }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const spr = getHeroSprite(0, skin);
+    ctx.drawImage(spr, (cv.width - 12 * 5) / 2, (cv.height - 14 * 5) / 2 + 4, 12 * 5, 14 * 5);
+  }, [skin]);
+  return <canvas ref={ref} width={72} height={80} style={{ imageRendering: "pixelated" }} />;
+}
+
+function WeaponPreview({ skin }: { skin: WeaponSkinDef }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    // quầng sáng
+    const g = ctx.createRadialGradient(44, 40, 4, 44, 40, 34);
+    g.addColorStop(0, skin.aura + "55");
+    g.addColorStop(1, skin.aura + "00");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 88, 80);
+    // hai tia chéo
+    for (const [ang, len] of [
+      [-0.5, 30],
+      [0.5, 30],
+    ] as const) {
+      ctx.save();
+      ctx.translate(44, 40);
+      ctx.rotate(ang);
+      ctx.fillStyle = skin.bolt;
+      ctx.fillRect(-len, -4, len * 2, 8);
+      ctx.fillStyle = skin.core;
+      ctx.fillRect(-len + 5, -2, len * 1.4, 4);
+      ctx.restore();
+    }
+    // kiếm xoay
+    ctx.save();
+    ctx.translate(44, 40);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = skin.blade;
+    ctx.fillRect(-16, -3, 32, 6);
+    ctx.fillRect(-3, -16, 6, 32);
+    ctx.fillStyle = skin.blade2;
+    ctx.fillRect(-13, -1.5, 26, 3);
+    ctx.restore();
+    ctx.fillStyle = skin.glow;
+    ctx.fillRect(41, 37, 6, 6);
+  }, [skin]);
+  return <canvas ref={ref} width={88} height={80} style={{ imageRendering: "pixelated" }} />;
+}
+
+export function ShopScreen({
+  gold,
+  save,
+  onBuy,
+  onEquip,
+  onClose,
+}: {
+  gold: number;
+  save: SaveData;
+  onBuy: (kind: "hero" | "weapon", id: string, price: number) => void;
+  onEquip: (kind: "hero" | "weapon", id: string) => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"hero" | "weapon">("hero");
+  const items = (tab === "hero" ? HERO_SKINS : WEAPON_SKINS) as (HeroSkinDef | WeaponSkinDef)[];
+  const owned = tab === "hero" ? save.heroOwned : save.weaponOwned;
+  const equipped = tab === "hero" ? save.hero : save.weapon;
+
+  return (
+    <div className="absolute inset-0 z-40 bg-[#0c0704]/85 flex items-center justify-center p-3 md:p-6">
+      <div className="panel w-full max-w-5xl h-full max-h-[92vh] flex flex-col anim-rise overflow-hidden">
+        {/* header */}
+        <div className="flex items-center gap-3 px-4 md:px-6 py-3 border-b-[3px] border-[#6b4423] flex-wrap">
+          <Icon name="bag" className="w-7 h-7 text-[#ffd94a]" />
+          <div className="font-display text-2xl text-[#ffd94a] title-glow">CỬA HÀNG</div>
+          <div className="flex gap-2 ml-2">
+            <button
+              onClick={() => setTab("hero")}
+              className="btn-ghost !py-1.5 !text-[13px]"
+              style={
+                tab === "hero"
+                  ? { color: "#2c1a0c", background: "linear-gradient(180deg,#ffe08a,#d9932a)", borderColor: "#7a4d22" }
+                  : undefined
+              }
+            >
+              NHÂN VẬT ({save.heroOwned.length}/{HERO_SKINS.length})
+            </button>
+            <button
+              onClick={() => setTab("weapon")}
+              className="btn-ghost !py-1.5 !text-[13px]"
+              style={
+                tab === "weapon"
+                  ? { color: "#2c1a0c", background: "linear-gradient(180deg,#ffe08a,#d9932a)", borderColor: "#7a4d22" }
+                  : undefined
+              }
+            >
+              VŨ KHÍ ({save.weaponOwned.length}/{WEAPON_SKINS.length})
+            </button>
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="panel-deep px-3.5 py-1.5 flex items-center gap-2 font-bold text-[#ffd94a] tabular-nums">
+              <Icon name="coin" className="w-5 h-5" />
+              {gold.toLocaleString("vi")}
+            </span>
+            <button onClick={onClose} className="btn-ghost !px-3 !py-1.5 font-display text-[13px]">
+              ĐÓNG
+            </button>
+          </div>
+        </div>
+
+        <div className="px-4 md:px-6 py-2 text-[12px] text-[#d9bd8a] border-b-2 border-[#3d2712]">
+          Kiếm <b className="text-[#ffd94a]">vàng</b> bằng cách sinh tồn: +1~26/giây • diệt quái +1 • quái tinh nhuệ +6 • qua đợt +15~215 • hạ trùm +114~510
+        </div>
+
+        {/* lưới skin */}
+        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {items.map((s, i) => {
+              const isOwned = owned.includes(s.id);
+              const isEquipped = equipped === s.id;
+              const canBuy = gold >= s.price;
+              return (
+                <div
+                  key={s.id}
+                  className="card-in panel-deep p-3 flex flex-col items-center relative"
+                  style={{
+                    animationDelay: `${Math.min(i * 0.02, 0.5)}s`,
+                    borderColor: isEquipped ? "#ffd94a" : undefined,
+                    boxShadow: isEquipped
+                      ? "inset 0 0 0 2px #1c0f06, 0 0 16px rgba(255,217,74,.35), 0 4px 0 rgba(0,0,0,.4)"
+                      : undefined,
+                  }}
+                >
+                  <span
+                    className="absolute top-1.5 left-1.5 font-display text-[9px] px-1.5 py-0.5 rounded"
+                    style={{ background: TIER_COLORS[s.tier] + "30", color: TIER_COLORS[s.tier] }}
+                  >
+                    {TIER_NAMES[s.tier]}
+                  </span>
+                  {isEquipped && (
+                    <span className="absolute top-1.5 right-1.5">
+                      <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
+                    </span>
+                  )}
+                  <div className="h-[84px] flex items-center justify-center">
+                    {tab === "hero" ? <HeroPreview skin={s as HeroSkinDef} /> : <WeaponPreview skin={s as WeaponSkinDef} />}
+                  </div>
+                  <div className="mt-1 text-[12.5px] font-bold text-[#ffe9b8] text-center leading-tight">{s.name}</div>
+                  <div className="mt-2 w-full">
+                    {isEquipped ? (
+                      <div className="w-full text-center font-display text-[11px] py-1.5 rounded bg-[#7ce06a]/20 text-[#7ce06a] border border-[#7ce06a]/50">
+                        ĐANG DÙNG
+                      </div>
+                    ) : isOwned ? (
+                      <button onClick={() => onEquip(tab, s.id)} className="btn-ghost w-full !py-1.5 !text-[12px]">
+                        TRANG BỊ
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onBuy(tab, s.id, s.price)}
+                        disabled={!canBuy}
+                        className="btn w-full !py-1.5 !text-[12px] flex items-center justify-center gap-1.5"
+                      >
+                        <Icon name="coin" className="w-3.5 h-3.5" />
+                        {s.price === 0 ? "MIỄN PHÍ" : s.price.toLocaleString("vi")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -321,8 +646,8 @@ export function LevelUpScreen({
   onPick: (i: number) => void;
 }) {
   return (
-    <div className="absolute inset-0 z-30 bg-[#0c0704]/75 flex flex-col items-center justify-center px-4">
-      <div className="text-center mb-7 anim-rise">
+    <div className="absolute inset-0 z-30 bg-[#0c0704]/75 flex flex-col items-center justify-center px-4 overflow-y-auto py-6">
+      <div className="text-center mb-7 anim-rise shrink-0">
         <div className="font-display text-4xl md:text-5xl text-[#7ce06a]" style={{ textShadow: "0 0 22px rgba(124,224,106,.5), 0 4px 0 #1d4a16" }}>
           LÊN CẤP {hud ? hud.lv : ""}!
         </div>
@@ -384,6 +709,7 @@ export function StageClearScreen({ stats, onNext }: { stats: GameStats; onNext: 
           <StatRow icon="skull" label="Quái đã hạ" value={stats.kills.toLocaleString("vi")} color="text-[#ff8095]" />
           <StatRow icon="haste" label="Thời gian" value={stats.time} color="text-[#63e6ff]" />
           <StatRow icon="heart" label="Cấp nhân vật" value={`Lv ${stats.level}`} color="text-[#7ce06a]" />
+          <StatRow icon="coin" label="Vàng vừa kiếm" value={`+${stats.goldEarned.toLocaleString("vi")}`} color="text-[#ffd94a]" />
         </div>
         <button onClick={onNext} className="btn mt-6 w-full flex items-center justify-center gap-2 text-lg">
           MÀN {stats.stage + 1} <Icon name="arrow" className="w-5 h-5" />
@@ -425,9 +751,12 @@ export function GameOverScreen({
           <StatRow icon="skull" label="Hạ gục" value={stats.kills.toLocaleString("vi")} color="text-[#ff8095]" />
           <StatRow icon="haste" label="Thời gian" value={stats.time} color="text-[#63e6ff]" />
           <StatRow icon="heart" label="Cấp độ" value={`Lv ${stats.level}`} color="text-[#7ce06a]" />
-          <StatRow icon="crown" label="Kỷ lục" value={`Màn ${Math.max(best, stats.stage)}`} color="text-[#ffd94a]" />
+          <StatRow icon="coin" label="Vàng trận này" value={`+${stats.goldEarned.toLocaleString("vi")}`} color="text-[#ffd94a]" />
         </div>
-        <div className="mt-6 flex gap-3">
+        <p className="mt-3 text-[12px] text-[#d9bd8a]">
+          Vàng đã cất vào túi — về <b className="text-[#ffd94a]">Cửa hàng</b> sắm skin thôi!
+        </p>
+        <div className="mt-5 flex gap-3">
           <button onClick={onRetry} className="btn flex-1 flex items-center justify-center gap-2">
             <Icon name="play" className="w-4 h-4" /> CHƠI LẠI
           </button>
@@ -467,7 +796,7 @@ export function VictoryScreen({
         <div className="mt-5 space-y-2">
           <StatRow icon="skull" label="Tổng quái đã hạ" value={stats.kills.toLocaleString("vi")} color="text-[#ff8095]" />
           <StatRow icon="haste" label="Tổng thời gian" value={stats.time} color="text-[#63e6ff]" />
-          <StatRow icon="heart" label="Cấp cuối cùng" value={`Lv ${stats.level}`} color="text-[#7ce06a]" />
+          <StatRow icon="coin" label="Vàng trận này" value={`+${stats.goldEarned.toLocaleString("vi")}`} color="text-[#ffd94a]" />
         </div>
         <div className="mt-6 flex gap-3">
           <button onClick={onRetry} className="btn flex-1 flex items-center justify-center gap-2">

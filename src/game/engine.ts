@@ -1,6 +1,8 @@
 import { sfx } from "./audio";
 import { getHeroSprite, getMobSprite, getItemSprite } from "./sprites";
 import type { MobColors, MobKind } from "./sprites";
+import { HERO_SKINS, WEAPON_SKINS } from "./shop";
+import type { HeroSkinDef, WeaponSkinDef } from "./shop";
 import {
   BIOMES,
   SKILLS,
@@ -48,6 +50,7 @@ export interface HudData {
   bossMaxHp: number;
   kills: number;
   cores: number;
+  goldRun: number;
   time: string;
   muted: boolean;
   skills: HudSkill[];
@@ -58,6 +61,7 @@ export interface GameStats {
   kills: number;
   time: string;
   level: number;
+  goldEarned: number;
   bossName?: string;
 }
 export interface OverData {
@@ -236,6 +240,13 @@ export class Engine {
   private iframes = 0;
   private hurtFx = 0;
   private regenAcc = 0;
+  private goldRun = 0;
+  private goldBanked = 0;
+  private goldT = 0;
+  private joy = { x: 0, y: 0, active: false };
+  private heroSkin: HeroSkinDef = HERO_SKINS[0];
+  private weaponSkin: WeaponSkinDef = WEAPON_SKINS[0];
+  private orbitPts: { x: number; y: number; ev: boolean }[] = [];
 
   // progression
   private stage = 1;
@@ -367,6 +378,10 @@ export class Engine {
     this.pendingLv = 0;
     this.kills = 0;
     this.cores = 0;
+    this.goldRun = 0;
+    this.goldBanked = 0;
+    this.goldT = 0;
+    this.joy = { x: 0, y: 0, active: false };
     this.totalTime = 0;
     this.passives = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
     (Object.keys(this.skills) as SkillId[]).forEach((k) => {
@@ -412,6 +427,24 @@ export class Engine {
   toggleMute() {
     sfx.toggleMute();
     this.pushHud();
+  }
+  applyLoadout(hero: HeroSkinDef, weapon: WeaponSkinDef) {
+    this.heroSkin = hero;
+    this.weaponSkin = weapon;
+  }
+  setJoystick(x: number, y: number) {
+    if (x === 0 && y === 0) {
+      this.joy.active = false;
+      this.joy.x = 0;
+      this.joy.y = 0;
+      return;
+    }
+    this.joy.active = true;
+    this.joy.x = clamp(x, -1, 1);
+    this.joy.y = clamp(y, -1, 1);
+  }
+  bankGold() {
+    this.goldBanked = this.goldRun;
   }
   nextStage() {
     this.stage++;
@@ -477,7 +510,13 @@ export class Engine {
   }
 
   private stats(): GameStats {
-    return { stage: this.stage, kills: this.kills, time: fmtTime(this.totalTime), level: this.level };
+    return {
+      stage: this.stage,
+      kills: this.kills,
+      time: fmtTime(this.totalTime),
+      level: this.level,
+      goldEarned: this.goldRun - this.goldBanked,
+    };
   }
 
   private pushHud() {
@@ -506,6 +545,7 @@ export class Engine {
       bossMaxHp: boss ? boss.maxHp : 1,
       kills: this.kills,
       cores: this.cores,
+      goldRun: this.goldRun,
       time: fmtTime(this.totalTime),
       muted: sfx.muted,
       skills,
@@ -680,6 +720,7 @@ export class Engine {
     if (e.dead) return;
     e.dead = true;
     this.kills++;
+    if (!e.boss) this.goldRun += e.elite ? 6 : 1;
     this.burst(e.x, e.y, e.boss ? 46 : 10, e.colors.M, e.boss ? 260 : 150);
     this.burst(e.x, e.y, e.boss ? 20 : 0, e.colors.X, 200);
     sfx.kill();
@@ -699,6 +740,9 @@ export class Engine {
       if (this.waveKills >= waveQuota(this.stage, this.wave)) {
         this.wave++;
         this.waveKills = 0;
+        const g = 15 + this.stage * 2;
+        this.goldRun += g;
+        this.dmgNum(this.px, this.py - 34, `+${g} vàng`, "#ffd94a", 15);
         if (this.wave >= 4) {
           this.banner("CẢNH BÁO!", "Trùm đang tới...");
           this.bossIncoming = 1.5;
@@ -721,6 +765,9 @@ export class Engine {
     this.hitStop = 0.14;
     this.shake = 16;
     sfx.bossDie();
+    const g = 110 + this.stage * 4;
+    this.goldRun += g;
+    this.dmgNum(e.x, e.y - e.r - 10, `+${g} vàng`, "#ffd94a", 19);
     this.cores++;
     this.dropPickup(e.x, e.y, "core", 1);
     for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 6));
@@ -742,7 +789,9 @@ export class Engine {
       this.hp = 0;
       this.burst(this.px, this.py, 34, "#ffd94a", 240);
       sfx.gameover();
-      this.setPhase("gameover", { stats: this.stats() });
+      const st = this.stats();
+      this.bankGold();
+      this.setPhase("gameover", { stats: st });
       const best = parseInt(localStorage.getItem("tvqv_best") || "0", 10);
       if (this.stage > best) localStorage.setItem("tvqv_best", String(this.stage));
     }
@@ -909,7 +958,7 @@ export class Engine {
           hitAny = true;
         }
       }
-      this.ring(this.px, this.py, 20, radius, 0.35, ev ? "#ffb03e" : "#ffe08a", ev ? 6 : 4);
+      this.ring(this.px, this.py, 20, radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
       if (hitAny) sfx.hit();
       this.cds.aura = Math.max(0.45, 1.0 - lv * 0.05) * C;
     }
@@ -1017,6 +1066,13 @@ export class Engine {
     if (this.keys.has("d") || this.keys.has("arrowright")) mx += 1;
     if (this.keys.has("w") || this.keys.has("arrowup")) my -= 1;
     if (this.keys.has("s") || this.keys.has("arrowdown")) my += 1;
+    if (this.joy.active) {
+      const mag = Math.hypot(this.joy.x, this.joy.y);
+      if (mag > 0.15) {
+        mx = this.joy.x / mag;
+        my = this.joy.y / mag;
+      }
+    }
     this.moving = mx !== 0 || my !== 0;
     if (this.moving) {
       const l = Math.hypot(mx, my);
@@ -1034,6 +1090,12 @@ export class Engine {
       const h = Math.floor(this.regenAcc);
       this.regenAcc -= h;
       this.hp = clamp(this.hp + h, 0, this.maxHp);
+    }
+    // vàng sinh tồn: cứ mỗi giây lại có tiền
+    this.goldT += dt;
+    if (this.goldT >= 1) {
+      this.goldT -= 1;
+      this.goldRun += 1 + Math.floor(this.stage / 4);
     }
 
     /* --- waves & spawn --- */
@@ -1131,10 +1193,12 @@ export class Engine {
       const dmg = (7 + lv * 3) * (ev ? 2.3 : 1) * this.power();
       const bspd = 2.4 + lv * 0.15;
       this.orbitBlades = { n, radius, dmg, bspd, ev };
+      this.orbitPts = [];
       for (let i = 0; i < n; i++) {
         const a = this.orbitT * bspd + (i * Math.PI * 2) / n;
         const bx = this.px + Math.cos(a) * radius;
         const by = this.py - 8 + Math.sin(a) * radius * 0.82;
+        this.orbitPts.push({ x: bx, y: by, ev });
         for (const e of this.enemies) {
           if (e.dead || e.bladeCd > 0) continue;
           if (dist2(e.x, e.y, bx, by) < (e.r + (ev ? 22 : 15)) * (e.r + (ev ? 22 : 15))) {
@@ -1146,6 +1210,7 @@ export class Engine {
       }
     } else {
       this.orbitBlades = null;
+      this.orbitPts = [];
     }
 
     /* --- frosts --- */
@@ -1259,11 +1324,13 @@ export class Engine {
         this.stageClearT = -1;
         const best = parseInt(localStorage.getItem("tvqv_best") || "0", 10);
         if (this.stage > best) localStorage.setItem("tvqv_best", String(this.stage));
+        const st = this.stats();
+        this.bankGold();
         if (this.stage >= TOTAL_STAGES) {
           sfx.victory();
-          this.setPhase("victory", { stats: this.stats() });
+          this.setPhase("victory", { stats: st });
         } else {
-          this.setPhase("stageclear", { stats: this.stats() });
+          this.setPhase("stageclear", { stats: st });
         }
       }
     }
@@ -1507,6 +1574,7 @@ export class Engine {
     for (const d of drawList) d.fn();
 
     this.drawShots(ctx);
+    this.drawOrbit(ctx);
     this.drawZaps(ctx);
     this.drawRings(ctx);
     this.drawFrosts(ctx);
@@ -1756,7 +1824,7 @@ export class Engine {
 
   private drawPlayer(ctx: CanvasRenderingContext2D) {
     if (this.iframes > 0 && Math.floor(this.iframes * 12) % 2 === 0) return;
-    const spr = getHeroSprite(this.moving ? Math.floor(this.walkT * 9) % 2 : 0);
+    const spr = getHeroSprite(this.moving ? Math.floor(this.walkT * 9) % 2 : 0, this.heroSkin);
     const scale = 3;
     const bob = this.moving ? Math.abs(Math.sin(this.walkT * 9)) * 2.5 : Math.sin(performance.now() / 450) * 1.2;
     const w = spr.width * scale;
@@ -1775,7 +1843,7 @@ export class Engine {
   }
 
   private drawIdleHero(ctx: CanvasRenderingContext2D) {
-    const spr = getHeroSprite(0);
+    const spr = getHeroSprite(0, this.heroSkin);
     const scale = 3;
     const bob = Math.sin(performance.now() / 450) * 1.4;
     const w = spr.width * scale;
@@ -1790,6 +1858,7 @@ export class Engine {
   }
 
   private drawShots(ctx: CanvasRenderingContext2D) {
+    const wc = this.weaponSkin;
     for (const s of this.shots) {
       const x = Math.round(s.x);
       const y = Math.round(s.y);
@@ -1798,9 +1867,9 @@ export class Engine {
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(Math.atan2(s.vy, s.vx));
-        ctx.fillStyle = s.evolved ? "#ffb03e" : "#ffd94a";
+        ctx.fillStyle = s.evolved ? wc.glow : wc.bolt;
         ctx.fillRect(-size, -3, size * 2, 6);
-        ctx.fillStyle = s.evolved ? "#ffe9b8" : "#fff3d0";
+        ctx.fillStyle = s.evolved ? "#fff3d0" : wc.core;
         ctx.fillRect(-size + 3, -1.5, size * 1.4, 3);
         if (s.evolved) {
           ctx.fillStyle = "#ff8080";
@@ -1812,10 +1881,10 @@ export class Engine {
         ctx.translate(x, y);
         ctx.rotate(s.spin);
         const L = s.evolved ? 24 : 16;
-        ctx.fillStyle = s.evolved ? "#ff5a5a" : "#e8dcc0";
+        ctx.fillStyle = s.evolved ? wc.glow : wc.blade;
         ctx.fillRect(-L, -3, L, 6);
         ctx.fillRect(3, -L, L, 6);
-        ctx.fillStyle = s.evolved ? "#ffd94a" : "#b5793a";
+        ctx.fillStyle = wc.blade2;
         ctx.fillRect(-4, -4, 8, 8);
         ctx.restore();
       }
@@ -1834,6 +1903,29 @@ export class Engine {
       ctx.beginPath();
       ctx.arc(b.x - 2, b.y - 2, b.r * 0.4, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  private drawOrbit(ctx: CanvasRenderingContext2D) {
+    const wc = this.weaponSkin;
+    const t = performance.now() / 90;
+    for (const p of this.orbitPts) {
+      if (p.ev) {
+        ctx.fillStyle = hexToRgba(wc.glow, 0.22);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(t + p.x * 0.04);
+      const L = p.ev ? 17 : 11;
+      ctx.fillStyle = wc.blade;
+      ctx.fillRect(-L, -3, L * 2, 6);
+      ctx.fillRect(-3, -L, 6, L * 2);
+      ctx.fillStyle = wc.blade2;
+      ctx.fillRect(-L + 3, -1.5, L * 2 - 6, 3);
+      ctx.restore();
     }
   }
 

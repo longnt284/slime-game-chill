@@ -33,6 +33,8 @@ export function Icon({ name, className = "w-5 h-5" }: IconProps) {
     skull: <path d="M12 2a8 8 0 00-8 8c0 3 1.6 5.4 4 6.8V21h2v-3h1.5v3h1.5v-3H14.5v3h2v-4.2c2.4-1.4 4-3.8 4-6.8a8 8 0 00-8-8zM8.5 8.5A2 2 0 118.5 12.5 2 2 0 018.5 8.5zm7 0a2 2 0 110 4 2 2 0 010-4z" />,
     core: <path d="M12 1l6 6-6 16L6 7zm0 4L8.5 7.5 12 16l3.5-8.5z" />,
     crown: <path d="M2 7l5 4 5-7 5 7 5-4-2 13H4zm4 11h12v2H6z" />,
+    coin: <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2.5a7.5 7.5 0 110 15 7.5 7.5 0 010-15zM10.5 7h3v2h2.5v3h-2.5v5h-3v-5H8v-3h2.5z" />,
+    bag: <path d="M8 2h8l1 4H7zm-3 5h14l1.5 14h-17zm5 3v2h2v-2zm4 0v2h2v-2z" />,
     pause: <path d="M5 3h5v18H5zm9 0h5v18h-5z" />,
     play: <path d="M6 3l15 9-15 9z" />,
     sound: <path d="M3 9h4l6-5v16l-6-5H3zm14.5-1.5a6 6 0 010 9M19.5 5a9.5 9.5 0 010 14" stroke="currentColor" strokeWidth="2" fill="none" />,

@@ -1,5 +1,7 @@
 /* Sprite pixel-art vẽ thủ công bằng lưới ký tự, render ra canvas offscreen rồi cache. */
 
+import type { HeroSkinDef } from "./shop";
+
 export type MobKind =
   | "slime"
   | "bat"
@@ -353,11 +355,28 @@ function makeSprite(rows: string[], legend: Record<string, string>): HTMLCanvasE
 
 const cache = new Map<string, HTMLCanvasElement>();
 
-export function getHeroSprite(frame: number): HTMLCanvasElement {
-  const key = `hero${frame}`;
+export function getHeroSprite(frame: number, skin?: HeroSkinDef): HTMLCanvasElement {
+  const key = `hero_${skin?.id ?? "def"}_${frame}`;
   let c = cache.get(key);
   if (!c) {
-    c = makeSprite(frame % 2 === 0 ? HERO_A : HERO_B, HERO_LEGEND);
+    const legend: Record<string, string> = skin
+      ? { H: skin.pal.H, h: skin.pal.h, S: "#f6c9a0", E: "#2f2a26", R: skin.pal.R, B: skin.pal.B, b: skin.pal.b, P: skin.pal.P, O: skin.pal.O }
+      : HERO_LEGEND;
+    c = makeSprite(frame % 2 === 0 ? HERO_A : HERO_B, legend);
+    if (skin) {
+      const ctx = c.getContext("2d")!;
+      const hatLegend: Record<string, string> = { A: skin.hatA, a: skin.hatA2, Y: "#ffd94a" };
+      skin.hat.forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) {
+          const ch = row[x];
+          if (ch === ".") continue;
+          const col = hatLegend[ch];
+          if (!col) continue;
+          ctx.fillStyle = col;
+          ctx.fillRect(x, y, 1, 1);
+        }
+      });
+    }
     cache.set(key, c);
   }
   return c;

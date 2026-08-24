@@ -196,21 +196,50 @@ export const WEAPON_SKINS: WeaponSkinDef[] = [
 
 const KEY = "tvqv_save_v1";
 
+const DEFAULT_SAVE: SaveData = {
+  gold: 100,
+  heroOwned: ["farmer_0"],
+  weaponOwned: ["w0"],
+  hero: "farmer_0",
+  weapon: "w0",
+};
+
+export function normalizeSave(value: unknown): SaveData {
+  const input = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+  const heroIds = new Set(HERO_SKINS.map((skin) => skin.id));
+  const weaponIds = new Set(WEAPON_SKINS.map((skin) => skin.id));
+  const savedHeroes = Array.isArray(input.heroOwned) ? input.heroOwned : [];
+  const savedWeapons = Array.isArray(input.weaponOwned) ? input.weaponOwned : [];
+  const heroOwned = [...new Set(["farmer_0", ...savedHeroes])]
+    .filter((id): id is string => typeof id === "string" && heroIds.has(id));
+  const weaponOwned = [...new Set(["w0", ...savedWeapons])]
+    .filter((id): id is string => typeof id === "string" && weaponIds.has(id));
+  const hero = typeof input.hero === "string" && heroOwned.includes(input.hero)
+    ? input.hero
+    : DEFAULT_SAVE.hero;
+  const weapon = typeof input.weapon === "string" && weaponOwned.includes(input.weapon)
+    ? input.weapon
+    : DEFAULT_SAVE.weapon;
+
+  return {
+    gold: typeof input.gold === "number" && Number.isFinite(input.gold)
+      ? Math.max(0, Math.floor(input.gold))
+      : DEFAULT_SAVE.gold,
+    heroOwned,
+    weaponOwned,
+    hero,
+    weapon,
+  };
+}
+
 export function loadSave(): SaveData {
-  const def: SaveData = { gold: 100, heroOwned: ["farmer_0"], weaponOwned: ["w0"], hero: "farmer_0", weapon: "w0" };
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return def;
-    const p = JSON.parse(raw) as Partial<SaveData>;
-    return {
-      gold: typeof p.gold === "number" ? p.gold : def.gold,
-      heroOwned: Array.isArray(p.heroOwned) && p.heroOwned.includes("farmer_0") ? p.heroOwned : def.heroOwned,
-      weaponOwned: Array.isArray(p.weaponOwned) && p.weaponOwned.includes("w0") ? p.weaponOwned : def.weaponOwned,
-      hero: typeof p.hero === "string" ? p.hero : def.hero,
-      weapon: typeof p.weapon === "string" ? p.weapon : def.weapon,
-    };
+    return normalizeSave(raw ? JSON.parse(raw) : null);
   } catch {
-    return def;
+    return normalizeSave(null);
   }
 }
 

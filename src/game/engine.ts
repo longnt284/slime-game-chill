@@ -3,13 +3,21 @@ import { getHeroSprite, getMobSprite, getItemSprite } from "./sprites";
 import type { MobColors, MobKind } from "./sprites";
 import { HERO_SKINS, WEAPON_SKINS } from "./shop";
 import type { HeroSkinDef, WeaponSkinDef } from "./shop";
-import { bossProjectileDamage, bossReward } from "./balance";
+import {
+  bossAttackTiming,
+  bossProjectileDamage,
+  bossReward,
+  bossXp,
+  enemySpeed,
+  enemyXp,
+  skillTuning,
+} from "./balance";
 import {
   applyChoice as applyProgressionChoice,
   createInitialProgression,
   rollChoices as buildChoices,
 } from "./progression";
-import { capFx, telegraphAlpha } from "./visuals";
+import { aimVector, capFx, telegraphAlpha } from "./visuals";
 import {
   BIOMES,
   WORLD,
@@ -20,8 +28,6 @@ import {
   xpNeed,
   mobHp,
   mobDmg,
-  mobSpeed,
-  gemValue,
   waveQuota,
   skillDef,
   ARCH_NAMES,
@@ -419,6 +425,11 @@ export class Engine {
     this.orbitPts = [];
     this.keys.clear();
     this.hudT = 0;
+    this.iframes = 0;
+    this.hurtFx = 0;
+    this.shake = 0;
+    this.hitStop = 0;
+    this.moving = false;
     this.maxHp = 100;
     this.hp = 100;
     this.px = WORLD / 2;
@@ -525,6 +536,13 @@ export class Engine {
     } else if (c.kind === "mastery" && c.id === "vitality") {
       this.maxHp += 6;
       this.hp = clamp(this.hp + 6, 1, this.maxHp);
+    } else if (c.kind === "heal" && c.id === "fortify") {
+      this.maxHp += 8;
+      this.hp = clamp(this.hp + 8, 1, this.maxHp);
+      sfx.heal();
+    } else if (c.kind === "heal" && c.id === "fortune") {
+      this.goldRun += 120 + this.stage * 3;
+      sfx.core();
     } else if (c.kind === "heal") {
       this.hp = clamp(this.hp + this.maxHp * 0.5, 1, this.maxHp);
       sfx.heal();
@@ -532,7 +550,7 @@ export class Engine {
     this.pendingLv--;
     if (this.pendingLv > 0) {
       this.rollChoices();
-      this.pushHud();
+      this.setPhase("levelup", { choices: this.choices });
     } else {
       this.setPhase("playing");
     }
@@ -639,7 +657,7 @@ export class Engine {
   }
 
   /* ============ enemies ============ */
-  private makeEnemy(kind: MobKind, colors: MobColors, x: number, y: number, stage: number, wave: number, elite: boolean): Enemy {
+  private makeEnemy(kind: MobKind, colors: MobColors, x: number, y: number, stage: number, wave: number, elite: boolean, duringBoss = false): Enemy {
     const hpv = mobHp(stage, wave) * (elite ? 6 : 1);
     return {
       kind,
@@ -649,9 +667,9 @@ export class Engine {
       hp: hpv,
       maxHp: hpv,
       r: elite ? 20 : 15,
-      speed: mobSpeed(stage) * (elite ? 0.85 : 1) * rand(0.88, 1.12),
+      speed: enemySpeed(stage, elite, rand(0.88, 1.12)),
       dmg: mobDmg(stage) * (elite ? 1.6 : 1),
-      xp: gemValue(stage) * (elite ? 6 : 1),
+      xp: enemyXp(stage, elite, duringBoss),
       flash: 0,
       frameT: Math.random() * 2,
       elite,
@@ -680,7 +698,7 @@ export class Engine {
       const elite = Math.random() < 0.035;
       const kind = kind2 ? altKind : this.biome.mobKind;
       const col = kind === this.biome.mobKind ? this.biome.mob : BIOMES[(BIOMES.indexOf(this.biome) + 9) % 10].mob;
-      const e = this.makeEnemy(kind, col, this.px + Math.cos(a) * d, this.py + Math.sin(a) * d, this.stage, Math.min(this.wave, 3), elite);
+      const e = this.makeEnemy(kind, col, this.px + Math.cos(a) * d, this.py + Math.sin(a) * d, this.stage, Math.min(this.wave, 3), elite, this.wave >= 4);
       this.enemies.push(e);
       this.puff(e.x, e.y, col.M);
     }
@@ -699,7 +717,7 @@ export class Engine {
       r: info.scale * 6,
       speed: info.speed,
       dmg: info.dmg,
-      xp: gemValue(this.stage) * 30,
+      xp: bossXp(this.stage),
       flash: 0,
       frameT: 0,
       elite: false,
@@ -767,10 +785,9 @@ export class Engine {
       this.onBossKilled(e);
       return;
     }
-    this.dropPickup(e.x, e.y, "xp", e.xp);
+    if (e.xp > 0) this.dropPickup(e.x, e.y, "xp", e.xp);
     if (e.elite) {
       if (Math.random() < 0.65) this.dropPickup(e.x + rand(-14, 14), e.y + rand(-10, 10), "core", 1);
-      this.dropPickup(e.x, e.y + 12, "xp", e.xp);
     } else if (Math.random() < 0.02) {
       this.dropPickup(e.x, e.y, "heart", 20);
     }
@@ -808,7 +825,7 @@ export class Engine {
     this.goldRun += reward.gold;
     this.cores += reward.cores;
     this.dmgNum(e.x, e.y - e.r - 10, `+${reward.gold} vàng`, "#ffd94a", 19);
-    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 6));
+    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", e.xp / 8);
     if (Math.random() < 0.5) this.dropPickup(e.x, e.y + 20, "heart", 30);
     this.ebullets = [];
     this.stageClearT = 1.5;
@@ -881,22 +898,21 @@ export class Engine {
     // ---- BOLT ----
     const bolt = this.skills.bolt;
     if (bolt.lv > 0 && this.cds.bolt <= 0) {
-      const targets = this.nearestEnemies(6, 560);
+      const tuning = skillTuning("bolt", bolt.lv, bolt.evolved);
+      const targets = this.nearestEnemies(6, tuning.range);
       if (targets.length) {
-        const lv = bolt.lv;
         const ev = bolt.evolved;
-        const count = 1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0) + (ev ? 2 : 0);
-        const dmg = (8 + lv * 3.5) * (ev ? 2.6 : 1) * P;
-        for (let i = 0; i < count; i++) {
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
           const t = targets[i % targets.length];
-          const base = Math.atan2(t.y - this.py, t.x - this.px) + (i - (count - 1) / 2) * 0.16;
+          const base = Math.atan2(t.y - this.py, t.x - this.px) + (i - (tuning.count - 1) / 2) * 0.16;
           const sp = 480;
           this.shots.push({
             kind: "bolt", x: this.px, y: this.py - 14, vx: Math.cos(base) * sp, vy: Math.sin(base) * sp,
-            dmg, pierce: lv >= 5 || ev ? 99 : 0, life: 1.4, homing: ev, r: ev ? 13 : 8, spin: 0, t: 0, dur: 1, sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, hitIds: new Set(),
+            dmg, pierce: bolt.lv >= 5 || ev ? 99 : 0, life: 1.4, homing: ev, r: tuning.radius, spin: 0, t: 0, dur: 1, sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, hitIds: new Set(),
           });
         }
-        this.cds.bolt = Math.max(0.24, 0.8 - lv * 0.05) * C;
+        this.cds.bolt = tuning.cooldown * C;
         sfx.shoot();
       }
     }
@@ -904,15 +920,14 @@ export class Engine {
     // ---- ZAP ----
     const zap = this.skills.zap;
     if (zap.lv > 0 && this.cds.zap <= 0) {
-      const lv = zap.lv;
       const ev = zap.evolved;
-      const count = 1 + Math.floor(lv / 2) + (ev ? 3 : 0);
-      const dmg = (14 + lv * 6) * (ev ? 2.2 : 1) * P;
-      const targets = this.nearestEnemies(count + 8, 540);
+      const tuning = skillTuning("zap", zap.lv, ev);
+      const dmg = tuning.damage * P;
+      const targets = this.nearestEnemies(tuning.count + 8, tuning.range);
       if (targets.length) {
         const chosen: Enemy[] = [];
         const poolZ = [...targets];
-        for (let i = 0; i < Math.min(count, poolZ.length); i++) {
+        for (let i = 0; i < Math.min(tuning.count, poolZ.length); i++) {
           const idx = Math.floor(Math.random() * poolZ.length);
           chosen.push(poolZ.splice(idx, 1)[0]);
         }
@@ -930,7 +945,7 @@ export class Engine {
             }
           }
         }
-        this.cds.zap = Math.max(0.5, 1.5 - lv * 0.08) * C;
+        this.cds.zap = tuning.cooldown * C;
         sfx.zap();
         this.shake = Math.max(this.shake, 2);
       }
@@ -939,42 +954,40 @@ export class Engine {
     // ---- AURA ----
     const aura = this.skills.aura;
     if (aura.lv > 0 && this.cds.aura <= 0) {
-      const lv = aura.lv;
       const ev = aura.evolved;
-      const radius = 85 + lv * 12 + (ev ? 55 : 0);
-      const dmg = (6 + lv * 3) * (ev ? 2.4 : 1) * P;
+      const tuning = skillTuning("aura", aura.lv, ev);
+      const dmg = tuning.damage * P;
       let hitAny = false;
       for (const e of this.enemies) {
-        if (!e.dead && dist2(e.x, e.y, this.px, this.py) < (radius + e.r) * (radius + e.r)) {
+        if (!e.dead && dist2(e.x, e.y, this.px, this.py) < (tuning.radius + e.r) * (tuning.radius + e.r)) {
           this.damageEnemy(e, dmg);
           hitAny = true;
         }
       }
-      this.ring(this.px, this.py, 20, radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
+      this.ring(this.px, this.py, 20, tuning.radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
       if (hitAny) sfx.hit();
-      this.cds.aura = Math.max(0.45, 1.0 - lv * 0.05) * C;
+      this.cds.aura = tuning.cooldown * C;
     }
 
     // ---- BOOM ----
     const boom = this.skills.boom;
     if (boom.lv > 0 && this.cds.boom <= 0) {
-      const lv = boom.lv;
       const ev = boom.evolved;
-      const t = this.nearestEnemies(1, 620)[0];
+      const tuning = skillTuning("boom", boom.lv, ev);
+      const t = this.nearestEnemies(1, tuning.range)[0];
       if (t) {
-        const n = 1 + (lv >= 4 ? 1 : 0) + (ev ? 1 : 0);
-        const dmg = (12 + lv * 5) * (ev ? 2.3 : 1) * P;
-        for (let i = 0; i < n; i++) {
-          const off = (i - (n - 1) / 2) * 0.5;
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
+          const off = (i - (tuning.count - 1) / 2) * 0.5;
           const a = Math.atan2(t.y - this.py, t.x - this.px) + off;
           const d = clamp(Math.sqrt(dist2(t.x, t.y, this.px, this.py)), 120, 420);
           this.shots.push({
             kind: "boom", x: this.px, y: this.py - 10, vx: 0, vy: 0, dmg, pierce: 99, life: 3, homing: false,
-            r: ev ? 22 : 15, spin: Math.random() * 6, t: 0, dur: 0.5, sx: this.px, sy: this.py - 10,
+            r: tuning.radius, spin: Math.random() * 6, t: 0, dur: 0.5, sx: this.px, sy: this.py - 10,
             tx: this.px + Math.cos(a) * d, ty: this.py + Math.sin(a) * d, evolved: ev, hitIds: new Set(),
           });
         }
-        this.cds.boom = Math.max(0.7, 1.7 - lv * 0.09) * C;
+        this.cds.boom = tuning.cooldown * C;
         sfx.throwSound();
       }
     }
@@ -982,18 +995,16 @@ export class Engine {
     // ---- FROST ----
     const frost = this.skills.frost;
     if (frost.lv > 0 && this.cds.frost <= 0) {
-      const lv = frost.lv;
       const ev = frost.evolved;
-      const targets = this.nearestEnemies(14, 600);
+      const tuning = skillTuning("frost", frost.lv, ev);
+      const targets = this.nearestEnemies(14, tuning.range);
       if (targets.length) {
-        const count = 1 + Math.floor(lv / 2) + (ev ? 3 : 0);
-        const dmg = (10 + lv * 4) * (ev ? 2.2 : 1) * P;
-        const aoe = 70 + lv * 6 + (ev ? 45 : 0);
-        for (let i = 0; i < count; i++) {
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
           const t = targets[Math.floor(Math.random() * targets.length)];
-          this.frosts.push({ x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45, dmg, aoe });
+          this.frosts.push({ x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45, dmg, aoe: tuning.radius });
         }
-        this.cds.frost = Math.max(0.6, 1.4 - lv * 0.06) * C;
+        this.cds.frost = tuning.cooldown * C;
         sfx.frost();
       }
     }
@@ -1189,23 +1200,21 @@ export class Engine {
     /* --- orbit blades --- */
     const orbit = this.skills.orbit;
     if (orbit.lv > 0) {
-      const lv = orbit.lv;
       const ev = orbit.evolved;
-      const n = 2 + (lv >= 3 ? 1 : 0) + (lv >= 5 ? 1 : 0) + (ev ? 2 : 0);
-      const radius = 62 + lv * 5 + (ev ? 26 : 0);
-      const dmg = (7 + lv * 3) * (ev ? 2.3 : 1) * this.power();
-      const bspd = 2.4 + lv * 0.15;
-      this.orbitBlades = { n, radius, dmg, bspd, ev };
+      const tuning = skillTuning("orbit", orbit.lv, ev);
+      const dmg = tuning.damage * this.power();
+      const bspd = 2.4 + orbit.lv * 0.15;
+      this.orbitBlades = { n: tuning.count, radius: tuning.radius, dmg, bspd, ev };
       this.orbitPts = [];
-      for (let i = 0; i < n; i++) {
-        const a = this.orbitT * bspd + (i * Math.PI * 2) / n;
-        const bx = this.px + Math.cos(a) * radius;
-        const by = this.py - 8 + Math.sin(a) * radius * 0.82;
+      for (let i = 0; i < tuning.count; i++) {
+        const a = this.orbitT * bspd + (i * Math.PI * 2) / tuning.count;
+        const bx = this.px + Math.cos(a) * tuning.radius;
+        const by = this.py - 8 + Math.sin(a) * tuning.radius * 0.82;
         this.orbitPts.push({ x: bx, y: by, ev });
         for (const e of this.enemies) {
           if (e.dead || e.bladeCd > 0) continue;
           if (dist2(e.x, e.y, bx, by) < (e.r + (ev ? 22 : 15)) * (e.r + (ev ? 22 : 15))) {
-            e.bladeCd = 0.28;
+            e.bladeCd = tuning.cooldown;
             const ka = Math.atan2(e.y - this.py, e.x - this.px);
             this.damageEnemy(e, dmg, e.boss ? 0 : Math.cos(ka) * 10, e.boss ? 0 : Math.sin(ka) * 10);
           }
@@ -1342,6 +1351,12 @@ export class Engine {
     }
 
     /* --- hud throttle --- */
+    this.particles = capFx(this.particles, 420);
+    this.dmgs = capFx(this.dmgs, 90);
+    this.zaps = capFx(this.zaps, 36);
+    this.rings = capFx(this.rings, 80);
+    this.trails = capFx(this.trails, 180);
+    this.telegraphs = capFx(this.telegraphs, 24);
     this.hudT -= dt;
     if (this.hudT <= 0) {
       this.hudT = 0.1;
@@ -1354,6 +1369,7 @@ export class Engine {
   private updateBoss(e: Enemy, dt: number) {
     const info = e.boss!;
     const bulletDamage = bossProjectileDamage(this.stage, info.king);
+    const timing = bossAttackTiming(this.stage, info.king, info.arch);
     const a = Math.atan2(this.py - e.y, this.px - e.x);
     e.stateT -= dt;
     const cdMul = info.king ? 0.75 : 1;
@@ -1365,8 +1381,6 @@ export class Engine {
           if (e.stateT <= 0) {
             e.state = "charge";
             e.stateT = 0.65;
-            e.tx = Math.cos(a);
-            e.ty = Math.sin(a);
             sfx.throwSound();
           }
         } else if (e.state === "charge") {
@@ -1375,18 +1389,21 @@ export class Engine {
           if (Math.random() < dt * 40) this.puff(e.x + rand(-20, 20), e.y + rand(-20, 20), info.colors.M);
           if (e.stateT <= 0) {
             e.state = "";
-            e.stateT = rand(2.4, 3.2) * cdMul;
+            e.stateT = timing.cooldown + rand(0, 0.8) * cdMul;
           }
         } else {
           e.x += Math.cos(a) * e.speed * dt;
           e.y += Math.sin(a) * e.speed * dt;
           if (e.stateT <= 0) {
             e.state = "tele";
-            e.stateT = 0.5;
+            e.stateT = timing.warning;
             e.flash = 0.4;
+            const aim = aimVector(e.x, e.y, this.px, this.py);
+            e.tx = aim.x;
+            e.ty = aim.y;
             this.telegraphs.push({
               x: e.x, y: e.y, tx: this.px, ty: this.py, radius: 74,
-              life: 0.5, maxLife: 0.5, color: info.colors.X, kind: "charge",
+              life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "charge",
             });
             sfx.wave();
           }
@@ -1400,7 +1417,7 @@ export class Engine {
         if (e.state === "tele") {
           if (e.stateT > 0) break;
           e.state = "";
-          e.stateT = Math.max(1.2, 2.4 - this.stage * 0.008) * cdMul;
+          e.stateT = timing.cooldown;
           const n = 10 + Math.floor(this.stage / 8);
           for (let i = 0; i < n; i++) {
             const ba = (i / n) * Math.PI * 2 + e.spiralA;
@@ -1410,11 +1427,11 @@ export class Engine {
           sfx.shoot();
         } else if (e.stateT <= 0) {
           e.state = "tele";
-          e.stateT = 0.55;
+          e.stateT = timing.warning;
           e.flash = 0.35;
           this.telegraphs.push({
             x: e.x, y: e.y, radius: 118,
-            life: 0.55, maxLife: 0.55, color: info.colors.X, kind: "burst",
+            life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "burst",
           });
           sfx.wave();
         }
@@ -1425,10 +1442,10 @@ export class Engine {
         e.x += Math.cos(a) * e.speed * 0.6 * dt;
         e.y += Math.sin(a) * e.speed * 0.6 * dt;
         if (e.stateT <= 0) {
-          e.stateT = 2.8 * cdMul;
+          e.stateT = timing.cooldown;
           for (let i = 0; i < 3 + Math.floor(this.stage / 25); i++) {
             const sa = Math.random() * Math.PI * 2;
-            const m = this.makeEnemy(this.biome.mobKind, this.biome.mob, e.x + Math.cos(sa) * 90, e.y + Math.sin(sa) * 90, this.stage, 3, false);
+            const m = this.makeEnemy(this.biome.mobKind, this.biome.mob, e.x + Math.cos(sa) * 90, e.y + Math.sin(sa) * 90, this.stage, 3, false, true);
             this.enemies.push(m);
             this.puff(m.x, m.y, info.colors.M);
           }
@@ -1443,7 +1460,7 @@ export class Engine {
         e.y += Math.sin(a) * e.speed * 0.7 * dt;
         e.spiralA += dt * 3.2;
         e.tx += dt; // tx dùng làm accumulator nhịp bắn
-        if (e.tx > 0.13) {
+        if (e.tx > timing.pulse) {
           e.tx = 0;
           for (const off of [0, Math.PI]) {
             this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.spiralA + off) * 185, vy: Math.sin(e.spiralA + off) * 185, r: 6, dmg: bulletDamage, life: 3.4, color: info.colors.X });
@@ -1465,7 +1482,7 @@ export class Engine {
           e.y += (e.ty - e.y) * Math.min(1, k * 1.6) * dt * 8;
           if (e.stateT <= 0) {
             e.state = "";
-            e.stateT = 3.4 * cdMul;
+            e.stateT = timing.cooldown;
             this.shake = 14;
             sfx.bossRoar();
             const n = 14;
@@ -1481,13 +1498,13 @@ export class Engine {
           e.y += Math.sin(a) * e.speed * dt;
           if (e.stateT <= 0) {
             e.state = "tele";
-            e.stateT = 0.45;
+            e.stateT = timing.warning;
             e.tx = this.px;
             e.ty = this.py;
             e.flash = 0.4;
             this.telegraphs.push({
               x: e.tx, y: e.ty, radius: 170,
-              life: 0.45, maxLife: 0.45, color: info.colors.X, kind: "slam",
+              life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "slam",
             });
             sfx.wave();
           }

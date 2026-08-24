@@ -2,7 +2,6 @@ import {
   MASTERY_DEFS,
   PASSIVES,
   SKILLS,
-  passiveDef,
   skillDef,
 } from "./data";
 import type {
@@ -159,15 +158,35 @@ export function rollChoices(state: ProgressionState, rng: () => number = Math.ra
     masteryPool.splice(index, 1);
   }
 
-  if (picks.length === 0) {
-    add({
+  const fallbackChoices: Choice[] = [
+    {
       kind: "heal",
       id: "heal",
       name: "Bữa Ăn Thịnh Soạn",
       desc: "Hồi 50% máu tối đa",
       icon: "heart",
       tag: "HỒI PHỤC",
-    });
+    },
+    {
+      kind: "heal",
+      id: "fortify",
+      name: "Canh Bổ Dưỡng",
+      desc: "+8 máu tối đa và hồi 8 máu",
+      icon: "shield",
+      tag: "BỀN BỈ",
+    },
+    {
+      kind: "heal",
+      id: "fortune",
+      name: "Túi Vàng May Mắn",
+      desc: "Nhận thêm vàng theo màn hiện tại",
+      icon: "coin",
+      tag: "TÀI LỘC",
+    },
+  ];
+  for (const choice of fallbackChoices) {
+    if (picks.length >= 3) break;
+    add(choice);
   }
 
   return picks;

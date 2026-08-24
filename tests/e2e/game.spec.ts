@@ -25,6 +25,19 @@ async function expectSeparatedHud(page: Page) {
   expect(overlaps(health!, stats!)).toBe(false);
 }
 
+async function sampleFps(page: Page, duration = 750) {
+  return page.evaluate((sampleDuration) => new Promise<number>((resolve) => {
+    let frames = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      frames += 1;
+      if (now - start >= sampleDuration) resolve((frames * 1000) / (now - start));
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), duration);
+}
+
 test("desktop HUD regions stay separate", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await expectSeparatedHud(page);
@@ -39,6 +52,55 @@ test("mobile HUD regions stay separate", async ({ browser }) => {
   });
   const page = await context.newPage();
   await expectSeparatedHud(page);
+  await context.close();
+});
+
+test("menu, shop, movement and pause form a complete desktop smoke path", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "CỬA HÀNG" }).click();
+  await expect(page.getByText("CỬA HÀNG", { exact: true }).last()).toBeVisible();
+  await page.getByRole("button", { name: "ĐÓNG" }).click();
+  await page.getByRole("button", { name: "BẮT ĐẦU" }).click();
+
+  const canvas = page.locator("canvas");
+  const beforeMove = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+  await page.keyboard.down("d");
+  await page.waitForTimeout(350);
+  await page.keyboard.up("d");
+  const afterMove = await canvas.evaluate((node: HTMLCanvasElement) => node.toDataURL());
+  expect(afterMove).not.toBe(beforeMove);
+
+  await page.keyboard.press("p");
+  await expect(page.getByText("TẠM DỪNG", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /TIẾP TỤC/ }).click();
+  await expect(page.getByText("TẠM DỪNG", { exact: true })).toBeHidden();
+  expect(await sampleFps(page)).toBeGreaterThanOrEqual(58);
+});
+
+test("held touch input survives HUD updates and mobile stays at 60 FPS", async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await context.newPage();
+  await page.goto("/");
+  await page.getByRole("button", { name: "BẮT ĐẦU" }).click();
+
+  const pad = page.locator('[data-control="joystick-pad"]');
+  const knob = page.locator('[data-control="joystick-knob"]');
+  const box = await pad.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width * 0.82, box!.y + box!.height / 2);
+  const heldTransform = await knob.evaluate((node) => getComputedStyle(node).transform);
+  await page.waitForTimeout(350);
+  expect(await knob.evaluate((node) => getComputedStyle(node).transform)).toBe(heldTransform);
+  await page.mouse.up();
+
+  expect(await sampleFps(page)).toBeGreaterThanOrEqual(58);
   await context.close();
 });
 

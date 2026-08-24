@@ -31,6 +31,7 @@ export function HUD({
       <div
         data-hud="health"
         className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "right-3 w-auto" : "w-[300px] max-w-[62vw]"}`}
+        style={touch ? { top: "calc(0.75rem + env(safe-area-inset-top))" } : undefined}
       >
         <div className="flex items-center gap-2">
           <Icon name="heart" className="w-5 h-5 text-[#ff4d6d] shrink-0" />
@@ -59,6 +60,7 @@ export function HUD({
             ? "top-[126px] inset-x-3"
             : "top-3 left-1/2 -translate-x-1/2 w-full px-2"
         }`}
+        style={touch ? { top: "calc(126px + env(safe-area-inset-top))" } : undefined}
       >
         <div className="panel px-4 py-1.5 flex items-center gap-3 whitespace-nowrap">
           <span className="font-display text-[13px] text-[#ffd94a]">
@@ -128,7 +130,10 @@ export function HUD({
       </div>
 
       {/* phải trên: nút + chỉ số */}
-      <div className={`absolute flex flex-col gap-1.5 ${touch ? "top-[80px] inset-x-3 items-center" : "top-3 right-3 items-end"}`}>
+      <div
+        className={`absolute flex flex-col gap-1.5 ${touch ? "top-[80px] inset-x-3 items-center" : "top-3 right-3 items-end"}`}
+        style={touch ? { top: "calc(80px + env(safe-area-inset-top))" } : undefined}
+      >
         {!touch && (
           <div className="flex gap-1.5 pointer-events-auto">
             <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
@@ -156,7 +161,10 @@ export function HUD({
       </div>
 
       {/* kỹ năng */}
-      <div className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[214px] left-3" : "bottom-3 left-3"}`}>
+      <div
+        className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[214px] left-3" : "bottom-3 left-3"}`}
+        style={touch ? { top: "calc(214px + env(safe-area-inset-top))" } : undefined}
+      >
         {hud.skills.map((s) => (
           <div
             key={s.id}
@@ -219,8 +227,12 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
   };
 
   return (
-    <div className="absolute bottom-6 left-5 z-20 pointer-events-auto select-none" style={{ touchAction: "none" }}>
+    <div
+      className="absolute bottom-6 left-5 z-20 pointer-events-auto select-none"
+      style={{ touchAction: "none", bottom: "calc(1.5rem + env(safe-area-inset-bottom))", left: "calc(1.25rem + env(safe-area-inset-left))" }}
+    >
       <div
+        data-control="joystick-pad"
         ref={ref}
         onPointerDown={(e) => {
           pid.current = e.pointerId;
@@ -243,6 +255,7 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
           {active ? "" : "DI CHUYỂN"}
         </div>
         <div
+          data-control="joystick-knob"
           className="absolute w-[58px] h-[58px] rounded-full"
           style={{
             left: "50%",
@@ -278,7 +291,10 @@ export function TouchControls({
   return (
     <>
       <Joystick onMove={onMove} />
-      <div className="absolute bottom-6 right-5 z-20 pointer-events-auto flex items-end gap-3" style={{ touchAction: "none" }}>
+      <div
+        className="absolute bottom-6 right-5 z-20 pointer-events-auto flex items-end gap-3"
+        style={{ touchAction: "none", bottom: "calc(1.5rem + env(safe-area-inset-bottom))", right: "calc(1.25rem + env(safe-area-inset-right))" }}
+      >
         <button
           onClick={onMute}
           className="w-12 h-12 rounded-full btn-ghost !p-0 flex items-center justify-center"

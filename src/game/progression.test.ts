@@ -36,6 +36,24 @@ describe("upgrade choices", () => {
     expect(choices.every((choice) => choice.kind === "mastery")).toBe(true);
   });
 
+  it.each([2, 1, 0])("keeps three useful cards with %i mastery tracks remaining", (remaining) => {
+    const state = createInitialProgression();
+    for (const skill of Object.values(state.skills)) {
+      skill.lv = 8;
+      skill.evolved = true;
+    }
+    for (const id of Object.keys(state.passives) as (keyof typeof state.passives)[]) state.passives[id] = 5;
+    const masteryIds = Object.keys(state.masteries) as (keyof typeof state.masteries)[];
+    masteryIds.forEach((id, index) => {
+      state.masteries[id] = index < masteryIds.length - remaining ? 30 : 29;
+    });
+
+    const choices = rollChoices(state, () => 0.2);
+
+    expect(choices).toHaveLength(3);
+    expect(new Set(choices.map((choice) => `${choice.kind}:${choice.id}`)).size).toBe(3);
+  });
+
   it("applies a mastery without mutating the previous progression state", () => {
     const state = createInitialProgression();
 

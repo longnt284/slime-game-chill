@@ -9,3 +9,11 @@ export function telegraphAlpha(life: number, maxLife: number): number {
   if (progress === 0 || progress === 1) return 0;
   return Math.sin(progress * Math.PI) * 0.72;
 }
+
+export function aimVector(x: number, y: number, targetX: number, targetY: number) {
+  const dx = targetX - x;
+  const dy = targetY - y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return { x: 1, y: 0 };
+  return { x: dx / length, y: dy / length };
+}

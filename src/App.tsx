@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Engine } from "./game/engine";
 import type { HudData, OverData, Phase } from "./game/engine";
 import { heroSkinById, weaponSkinById, loadSave, saveSave } from "./game/shop";
@@ -64,6 +64,16 @@ export default function App() {
     engRef.current?.applyLoadout(heroSkinById(s.hero), weaponSkinById(s.weapon));
   };
 
+  const handleMove = useCallback((x: number, y: number) => {
+    engRef.current?.setJoystick(x, y);
+  }, []);
+  const handlePause = useCallback(() => {
+    engRef.current?.togglePause();
+  }, []);
+  const handleMute = useCallback(() => {
+    engRef.current?.toggleMute();
+  }, []);
+
   const handleBuy = (kind: "hero" | "weapon", id: string, price: number) => {
     if (save.gold < price) return;
     const s: SaveData = { ...save, gold: save.gold - price };
@@ -92,8 +102,8 @@ export default function App() {
       {hud && inGame && (
         <HUD
           hud={hud}
-          onPause={() => engRef.current?.togglePause()}
-          onMute={() => engRef.current?.toggleMute()}
+          onPause={handlePause}
+          onMute={handleMute}
           touch={IS_TOUCH}
         />
       )}
@@ -102,9 +112,9 @@ export default function App() {
 
       {phase === "playing" && IS_TOUCH && (
         <TouchControls
-          onMove={(x, y) => engRef.current?.setJoystick(x, y)}
-          onPause={() => engRef.current?.togglePause()}
-          onMute={() => engRef.current?.toggleMute()}
+          onMove={handleMove}
+          onPause={handlePause}
+          onMute={handleMute}
           muted={hud?.muted ?? false}
         />
       )}

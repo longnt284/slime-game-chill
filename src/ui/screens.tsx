@@ -28,7 +28,11 @@ export function HUD({
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {/* trái trên: máu + kinh nghiệm */}
-      <div className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "w-[240px] max-w-[56vw]" : "w-[300px] max-w-[62vw]"}`}>
+      <div
+        data-hud="health"
+        className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "right-3 w-auto" : "w-[300px] max-w-[62vw]"}`}
+        style={touch ? { top: "calc(0.75rem + env(safe-area-inset-top))" } : undefined}
+      >
         <div className="flex items-center gap-2">
           <Icon name="heart" className="w-5 h-5 text-[#ff4d6d] shrink-0" />
           <div className="bar-outer flex-1 h-[18px]">
@@ -50,7 +54,14 @@ export function HUD({
       </div>
 
       {/* giữa trên: màn + đợt + trùm */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-full px-2">
+      <div
+        className={`absolute flex flex-col items-center gap-1.5 ${
+          touch
+            ? "top-[126px] inset-x-3"
+            : "top-3 left-1/2 -translate-x-1/2 w-full px-2"
+        }`}
+        style={touch ? { top: "calc(126px + env(safe-area-inset-top))" } : undefined}
+      >
         <div className="panel px-4 py-1.5 flex items-center gap-3 whitespace-nowrap">
           <span className="font-display text-[13px] text-[#ffd94a]">
             MÀN {hud.stage}/{TOTAL_STAGES}
@@ -66,7 +77,7 @@ export function HUD({
         </div>
 
         {!hud.bossActive ? (
-          <div className="panel-deep px-3 py-1.5 flex items-center gap-2.5">
+          <div data-hud="progress" className="panel-deep px-3 py-1.5 flex items-center gap-2.5">
             <span className="text-[11px] font-display text-[#d9bd8a]">ĐỢT</span>
             {[1, 2, 3].map((w) => (
               <span
@@ -95,7 +106,7 @@ export function HUD({
             </span>
           </div>
         ) : (
-          <div className={`panel px-3 py-1.5 ${touch ? "w-[300px]" : "w-[460px]"} max-w-[86vw]`}>
+          <div data-hud="progress" className={`panel px-3 py-1.5 ${touch ? "w-[300px]" : "w-[460px]"} max-w-[86vw]`}>
             <div className="flex items-center justify-between mb-1">
               <span className="flex items-center gap-1.5 font-display text-[11px] text-[#ff8095]">
                 <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
@@ -119,18 +130,21 @@ export function HUD({
       </div>
 
       {/* phải trên: nút + chỉ số */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
-        <div className="flex gap-1.5 pointer-events-auto">
-          <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
-            <Icon name={hud.muted ? "mute" : "sound"} className="w-4 h-4" />
-          </button>
-          {!touch && (
+      <div
+        className={`absolute flex flex-col gap-1.5 ${touch ? "top-[80px] inset-x-3 items-center" : "top-3 right-3 items-end"}`}
+        style={touch ? { top: "calc(80px + env(safe-area-inset-top))" } : undefined}
+      >
+        {!touch && (
+          <div className="flex gap-1.5 pointer-events-auto">
+            <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
+              <Icon name={hud.muted ? "mute" : "sound"} className="w-4 h-4" />
+            </button>
             <button onClick={onPause} className="btn-ghost !px-2.5 !py-1.5" title="Tạm dừng (P)">
               <Icon name="pause" className="w-4 h-4" />
             </button>
-          )}
-        </div>
-        <div className="panel-deep px-3 py-1.5 flex items-center gap-3 text-[13px] font-bold tabular-nums">
+          </div>
+        )}
+        <div data-hud="stats" className="panel-deep px-3 py-1.5 flex items-center gap-3 text-[13px] font-bold tabular-nums">
           <span className="flex items-center gap-1.5">
             <Icon name="skull" className="w-4 h-4 text-[#ff8095]" />
             {hud.kills.toLocaleString("vi")}
@@ -147,7 +161,10 @@ export function HUD({
       </div>
 
       {/* kỹ năng */}
-      <div className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[104px] left-3" : "bottom-3 left-3"}`}>
+      <div
+        className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[214px] left-3" : "bottom-3 left-3"}`}
+        style={touch ? { top: "calc(214px + env(safe-area-inset-top))" } : undefined}
+      >
         {hud.skills.map((s) => (
           <div
             key={s.id}
@@ -210,8 +227,12 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
   };
 
   return (
-    <div className="absolute bottom-6 left-5 z-20 pointer-events-auto select-none" style={{ touchAction: "none" }}>
+    <div
+      className="absolute bottom-6 left-5 z-20 pointer-events-auto select-none"
+      style={{ touchAction: "none", bottom: "calc(1.5rem + env(safe-area-inset-bottom))", left: "calc(1.25rem + env(safe-area-inset-left))" }}
+    >
       <div
+        data-control="joystick-pad"
         ref={ref}
         onPointerDown={(e) => {
           pid.current = e.pointerId;
@@ -234,6 +255,7 @@ function Joystick({ onMove }: { onMove: (x: number, y: number) => void }) {
           {active ? "" : "DI CHUYỂN"}
         </div>
         <div
+          data-control="joystick-knob"
           className="absolute w-[58px] h-[58px] rounded-full"
           style={{
             left: "50%",
@@ -261,13 +283,18 @@ export function TouchControls({
   onMute: () => void;
   muted: boolean;
 }) {
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
   useEffect(() => {
-    return () => onMove(0, 0);
-  }, [onMove]);
+    return () => onMoveRef.current(0, 0);
+  }, []);
   return (
     <>
       <Joystick onMove={onMove} />
-      <div className="absolute bottom-6 right-5 z-20 pointer-events-auto flex items-end gap-3" style={{ touchAction: "none" }}>
+      <div
+        className="absolute bottom-6 right-5 z-20 pointer-events-auto flex items-end gap-3"
+        style={{ touchAction: "none", bottom: "calc(1.5rem + env(safe-area-inset-bottom))", right: "calc(1.25rem + env(safe-area-inset-right))" }}
+      >
         <button
           onClick={onMute}
           className="w-12 h-12 rounded-full btn-ghost !p-0 flex items-center justify-center"
@@ -632,6 +659,7 @@ const TAG_STYLE: Record<Choice["kind"], string> = {
   new: "bg-[#63e6ff] text-[#083344]",
   up: "bg-[#7ce06a] text-[#14350f]",
   passive: "bg-[#c9a0e8] text-[#2c1040]",
+  mastery: "bg-[#ff9d2e] text-[#401d04]",
   heal: "bg-[#ff8095] text-[#4a0816]",
 };
 const TILTS = ["-3deg", "0deg", "3deg"];

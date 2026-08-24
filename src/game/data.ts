@@ -1,4 +1,6 @@
 import type { MobColors, MobKind } from "./sprites";
+import { bossStats } from "./balance";
+export { gemValue, mobDmg, mobHp, mobSpeed, waveQuota, xpNeed } from "./balance";
 
 /* ============================ BIOMES ============================ */
 
@@ -146,6 +148,7 @@ export const biomeOf = (stage: number): Biome => BIOMES[Math.min(9, Math.floor((
 
 export type SkillId = "bolt" | "orbit" | "aura" | "zap" | "boom" | "frost";
 export type PassiveId = "speed" | "heart" | "power" | "haste" | "magnet" | "regen";
+export type MasteryId = "force" | "vitality" | "swiftness" | "vacuum";
 
 export interface SkillDef {
   id: SkillId;
@@ -223,15 +226,28 @@ export const PASSIVES: PassiveDef[] = [
   { id: "regen", name: "Thuốc Tiên", icon: "regen", desc: "+0.7 hồi máu mỗi giây" },
 ];
 
+export interface MasteryDef {
+  id: MasteryId;
+  name: string;
+  icon: string;
+  desc: string;
+  max: number;
+}
+
+export const MASTERY_DEFS: MasteryDef[] = [
+  { id: "force", name: "Uy Lực", icon: "power", desc: "+3% sát thương", max: 30 },
+  { id: "vitality", name: "Sinh Lực", icon: "heart", desc: "+6 máu tối đa và hồi 6", max: 30 },
+  { id: "swiftness", name: "Thân Pháp", icon: "speed", desc: "+1% tốc độ", max: 30 },
+  { id: "vacuum", name: "Hấp Lực", icon: "magnet", desc: "+6% phạm vi nhặt", max: 30 },
+];
+
 export const skillDef = (id: SkillId) => SKILLS.find((s) => s.id === id)!;
 export const passiveDef = (id: PassiveId) => PASSIVES.find((p) => p.id === id)!;
 
 /* ============================ LEVEL / CHOICES ============================ */
 
-export const xpNeed = (lv: number) => Math.floor(7 + lv * 4 + Math.pow(lv, 1.5));
-
 export interface Choice {
-  kind: "new" | "up" | "evolve" | "passive" | "heal";
+  kind: "new" | "up" | "evolve" | "passive" | "mastery" | "heal";
   id: string;
   name: string;
   desc: string;
@@ -292,16 +308,16 @@ export function makeBoss(stage: number): BossInfo {
       : king
         ? `${PREFIX[stage % 8]} ${biome.mobName.toUpperCase()} ${SUFFIX[stage % 10]}`
         : `${PREFIX[Math.floor(rnd() * 8)]} ${["SỪNG GÃY", "MẮT ĐỎ", "VÂY THÉP", "XƯƠNG TRẮNG", "RÊU PHONG", "NANH ĐỘC", "LỬA TÀN", "BÓNG ĐÊM", "CÁNH CỤT", "GAI SẮT"][Math.floor(rnd() * 10)]}`;
-  const hp = Math.floor(260 * stage * (1 + stage * 0.045) * (king ? 1.9 : 1));
+  const stats = bossStats(stage, king);
   return {
     name,
     kind,
     colors,
     arch,
     king,
-    hp,
-    dmg: 10 + stage * 1.4,
-    speed: 52 + Math.min(60, stage * 0.8) + (king ? 8 : 0),
+    hp: stats.hp,
+    dmg: stats.dmg,
+    speed: stats.speed,
     scale: king ? 6 : 4.6,
   };
 }
@@ -310,11 +326,3 @@ export function makeBoss(stage: number): BossInfo {
 
 export const WORLD = 2600;
 export const TOTAL_STAGES = 100;
-
-export const mobHp = (stage: number, wave: number) =>
-  Math.floor((7 + stage * 4.2) * (1 + (wave - 1) * 0.14));
-export const mobDmg = (stage: number) => Math.floor(6 + stage * 1.15);
-export const mobSpeed = (stage: number) => 62 + Math.min(85, stage * 0.85);
-export const gemValue = (stage: number) => 1 + Math.floor(stage / 4);
-export const waveQuota = (stage: number, wave: number) =>
-  Math.min(10 + Math.floor(stage * 1.1) + wave * 3, 46);

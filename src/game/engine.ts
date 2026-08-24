@@ -4,9 +4,22 @@ import type { MobColors, MobKind } from "./sprites";
 import { HERO_SKINS, WEAPON_SKINS } from "./shop";
 import type { HeroSkinDef, WeaponSkinDef } from "./shop";
 import {
+  bossAttackTiming,
+  bossProjectileDamage,
+  bossReward,
+  bossXp,
+  enemySpeed,
+  enemyXp,
+  skillTuning,
+} from "./balance";
+import {
+  applyChoice as applyProgressionChoice,
+  createInitialProgression,
+  rollChoices as buildChoices,
+} from "./progression";
+import { aimVector, capFx, telegraphAlpha } from "./visuals";
+import {
   BIOMES,
-  SKILLS,
-  PASSIVES,
   WORLD,
   TOTAL_STAGES,
   biomeOf,
@@ -15,14 +28,11 @@ import {
   xpNeed,
   mobHp,
   mobDmg,
-  mobSpeed,
-  gemValue,
   waveQuota,
   skillDef,
-  passiveDef,
   ARCH_NAMES,
 } from "./data";
-import type { BossInfo, Choice, SkillId, PassiveId, Biome } from "./data";
+import type { BossInfo, Choice, SkillId, PassiveId, MasteryId, Biome } from "./data";
 
 export type Phase = "menu" | "playing" | "paused" | "levelup" | "stageclear" | "gameover" | "victory";
 
@@ -192,6 +202,25 @@ interface Ring {
   color: string;
   width: number;
 }
+interface Trail {
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+}
+interface Telegraph {
+  x: number;
+  y: number;
+  tx?: number;
+  ty?: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  kind: "charge" | "burst" | "slam";
+}
 interface Frost {
   x: number;
   y: number;
@@ -268,6 +297,7 @@ export class Engine {
     frost: { lv: 0, evolved: false },
   };
   private passives: Record<PassiveId, number> = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
+  private masteries: Record<MasteryId, number> = { force: 0, vitality: 0, swiftness: 0, vacuum: 0 };
   private cds: Record<SkillId, number> = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
   private orbitT = 0;
   private choices: Choice[] = [];
@@ -289,6 +319,8 @@ export class Engine {
   private dmgs: DmgNum[] = [];
   private zaps: Zap[] = [];
   private rings: Ring[] = [];
+  private trails: Trail[] = [];
+  private telegraphs: Telegraph[] = [];
   private frosts: Frost[] = [];
   private decors: Decor[] = [];
   private ambients: Ambient[] = [];
@@ -372,6 +404,7 @@ export class Engine {
   /* ============ public API ============ */
   start() {
     sfx.unlock();
+    const progression = createInitialProgression();
     this.stage = 1;
     this.level = 1;
     this.xp = 0;
@@ -383,11 +416,20 @@ export class Engine {
     this.goldT = 0;
     this.joy = { x: 0, y: 0, active: false };
     this.totalTime = 0;
-    this.passives = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
-    (Object.keys(this.skills) as SkillId[]).forEach((k) => {
-      this.skills[k] = { lv: 0, evolved: false };
-    });
-    this.skills.bolt = { lv: 1, evolved: false };
+    this.skills = progression.skills;
+    this.passives = progression.passives;
+    this.masteries = progression.masteries;
+    this.cds = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
+    this.regenAcc = 0;
+    this.orbitT = 0;
+    this.orbitPts = [];
+    this.keys.clear();
+    this.hudT = 0;
+    this.iframes = 0;
+    this.hurtFx = 0;
+    this.shake = 0;
+    this.hitStop = 0;
+    this.moving = false;
     this.maxHp = 100;
     this.hp = 100;
     this.px = WORLD / 2;
@@ -472,23 +514,35 @@ export class Engine {
     const c = this.choices[i];
     if (!c) return;
     sfx.click();
-    if (c.kind === "new") {
-      this.skills[c.id as SkillId].lv = 1;
-    } else if (c.kind === "up") {
-      this.skills[c.id as SkillId].lv++;
-    } else if (c.kind === "evolve") {
-      this.skills[c.id as SkillId].evolved = true;
-      this.cores = Math.max(0, this.cores - 1);
+    const progression = applyProgressionChoice({
+      skills: this.skills,
+      passives: this.passives,
+      masteries: this.masteries,
+      cores: this.cores,
+    }, c);
+    this.skills = progression.skills;
+    this.passives = progression.passives;
+    this.masteries = progression.masteries;
+    this.cores = progression.cores;
+
+    if (c.kind === "evolve") {
       sfx.evolve();
       this.ring(this.px, this.py, 10, 160, 0.6, "#ffd94a", 6);
       this.burst(this.px, this.py, 26, "#ffd94a", 220);
       this.shake = Math.max(this.shake, 6);
-    } else if (c.kind === "passive") {
-      this.passives[c.id as PassiveId]++;
-      if (c.id === "heart") {
-        this.maxHp += 22;
-        this.hp = clamp(this.hp + 22, 1, this.maxHp);
-      }
+    } else if (c.kind === "passive" && c.id === "heart") {
+      this.maxHp += 22;
+      this.hp = clamp(this.hp + 22, 1, this.maxHp);
+    } else if (c.kind === "mastery" && c.id === "vitality") {
+      this.maxHp += 6;
+      this.hp = clamp(this.hp + 6, 1, this.maxHp);
+    } else if (c.kind === "heal" && c.id === "fortify") {
+      this.maxHp += 8;
+      this.hp = clamp(this.hp + 8, 1, this.maxHp);
+      sfx.heal();
+    } else if (c.kind === "heal" && c.id === "fortune") {
+      this.goldRun += 120 + this.stage * 3;
+      sfx.core();
     } else if (c.kind === "heal") {
       this.hp = clamp(this.hp + this.maxHp * 0.5, 1, this.maxHp);
       sfx.heal();
@@ -496,7 +550,7 @@ export class Engine {
     this.pendingLv--;
     if (this.pendingLv > 0) {
       this.rollChoices();
-      this.pushHud();
+      this.setPhase("levelup", { choices: this.choices });
     } else {
       this.setPhase("playing");
     }
@@ -560,16 +614,16 @@ export class Engine {
 
   /* ============ derived stats ============ */
   private power() {
-    return 1 + 0.14 * this.passives.power;
+    return 1 + 0.14 * this.passives.power + 0.03 * this.masteries.force;
   }
   private cdr() {
     return Math.pow(0.92, this.passives.haste);
   }
   private magnetR() {
-    return 95 * (1 + 0.4 * this.passives.magnet);
+    return 95 * (1 + 0.4 * this.passives.magnet + 0.06 * this.masteries.vacuum);
   }
   private moveSpeed() {
-    return 252 * (1 + 0.09 * this.passives.speed);
+    return 252 * (1 + 0.09 * this.passives.speed + 0.01 * this.masteries.swiftness);
   }
 
   /* ============ stage build ============ */
@@ -603,7 +657,7 @@ export class Engine {
   }
 
   /* ============ enemies ============ */
-  private makeEnemy(kind: MobKind, colors: MobColors, x: number, y: number, stage: number, wave: number, elite: boolean): Enemy {
+  private makeEnemy(kind: MobKind, colors: MobColors, x: number, y: number, stage: number, wave: number, elite: boolean, duringBoss = false): Enemy {
     const hpv = mobHp(stage, wave) * (elite ? 6 : 1);
     return {
       kind,
@@ -613,9 +667,9 @@ export class Engine {
       hp: hpv,
       maxHp: hpv,
       r: elite ? 20 : 15,
-      speed: mobSpeed(stage) * (elite ? 0.85 : 1) * rand(0.88, 1.12),
+      speed: enemySpeed(stage, elite, rand(0.88, 1.12)),
       dmg: mobDmg(stage) * (elite ? 1.6 : 1),
-      xp: gemValue(stage) * (elite ? 6 : 1),
+      xp: enemyXp(stage, elite, duringBoss),
       flash: 0,
       frameT: Math.random() * 2,
       elite,
@@ -644,7 +698,7 @@ export class Engine {
       const elite = Math.random() < 0.035;
       const kind = kind2 ? altKind : this.biome.mobKind;
       const col = kind === this.biome.mobKind ? this.biome.mob : BIOMES[(BIOMES.indexOf(this.biome) + 9) % 10].mob;
-      const e = this.makeEnemy(kind, col, this.px + Math.cos(a) * d, this.py + Math.sin(a) * d, this.stage, Math.min(this.wave, 3), elite);
+      const e = this.makeEnemy(kind, col, this.px + Math.cos(a) * d, this.py + Math.sin(a) * d, this.stage, Math.min(this.wave, 3), elite, this.wave >= 4);
       this.enemies.push(e);
       this.puff(e.x, e.y, col.M);
     }
@@ -663,7 +717,7 @@ export class Engine {
       r: info.scale * 6,
       speed: info.speed,
       dmg: info.dmg,
-      xp: gemValue(this.stage) * 30,
+      xp: bossXp(this.stage),
       flash: 0,
       frameT: 0,
       elite: false,
@@ -691,7 +745,8 @@ export class Engine {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const v = rand(sp * 0.3, sp);
-      this.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, life: rand(0.3, 0.7), maxLife: 0.7, size: rand(2, 5), color, grav: 260 });
+      const life = rand(0.3, 0.7);
+      this.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, life, maxLife: life, size: rand(2, 5), color, grav: 260 });
     }
   }
   private puff(x: number, y: number, color: string) {
@@ -712,6 +767,8 @@ export class Engine {
     e.flash = 0.1;
     e.x = clamp(e.x + knockX, 30, WORLD - 30);
     e.y = clamp(e.y + knockY, 30, WORLD - 30);
+    this.burst(e.x, e.y - e.r * 0.35, e.boss ? 3 : 2, "#fff3d0", 95);
+    this.burst(e.x, e.y - e.r * 0.35, 1, e.colors.X, 75);
     this.dmgNum(e.x, e.y - e.r, String(d), e.boss ? "#ffd94a" : "#ffffff", e.boss ? 19 : 14);
     if (e.hp <= 0) this.killEnemy(e);
   }
@@ -728,10 +785,9 @@ export class Engine {
       this.onBossKilled(e);
       return;
     }
-    this.dropPickup(e.x, e.y, "xp", e.xp);
+    if (e.xp > 0) this.dropPickup(e.x, e.y, "xp", e.xp);
     if (e.elite) {
       if (Math.random() < 0.65) this.dropPickup(e.x + rand(-14, 14), e.y + rand(-10, 10), "core", 1);
-      this.dropPickup(e.x, e.y + 12, "xp", e.xp);
     } else if (Math.random() < 0.02) {
       this.dropPickup(e.x, e.y, "heart", 20);
     }
@@ -765,12 +821,11 @@ export class Engine {
     this.hitStop = 0.14;
     this.shake = 16;
     sfx.bossDie();
-    const g = 110 + this.stage * 4;
-    this.goldRun += g;
-    this.dmgNum(e.x, e.y - e.r - 10, `+${g} vàng`, "#ffd94a", 19);
-    this.cores++;
-    this.dropPickup(e.x, e.y, "core", 1);
-    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 6));
+    const reward = bossReward(this.stage);
+    this.goldRun += reward.gold;
+    this.cores += reward.cores;
+    this.dmgNum(e.x, e.y - e.r - 10, `+${reward.gold} vàng`, "#ffd94a", 19);
+    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", e.xp / 8);
     if (Math.random() < 0.5) this.dropPickup(e.x, e.y + 20, "heart", 30);
     this.ebullets = [];
     this.stageClearT = 1.5;
@@ -800,58 +855,12 @@ export class Engine {
 
   /* ============ choices ============ */
   private rollChoices() {
-    const pool: { c: Choice; w: number }[] = [];
-    // tiến hóa (ưu tiên)
-    const evos: Choice[] = [];
-    if (this.cores > 0) {
-      (Object.keys(this.skills) as SkillId[]).forEach((id) => {
-        const s = this.skills[id];
-        if (s.lv >= 5 && !s.evolved) {
-          const d = skillDef(id);
-          evos.push({ kind: "evolve", id, name: d.evoName, desc: d.evoDesc, icon: d.icon, tag: "TIẾN HÓA" });
-        }
-      });
-    }
-    (Object.keys(this.skills) as SkillId[]).forEach((id) => {
-      const s = this.skills[id];
-      if (s.lv > 0 && s.lv < 8) {
-        const d = skillDef(id);
-        pool.push({ c: { kind: "up", id, name: s.evolved ? d.evoName : d.name, desc: d.desc, icon: d.icon, tag: `Cấp ${s.lv} → ${s.lv + 1}` }, w: 3 });
-      }
+    this.choices = buildChoices({
+      skills: this.skills,
+      passives: this.passives,
+      masteries: this.masteries,
+      cores: this.cores,
     });
-    (Object.keys(this.passives) as PassiveId[]).forEach((id) => {
-      if (this.passives[id] < 5) {
-        const d = passiveDef(id);
-        pool.push({ c: { kind: "passive", id, name: d.name, desc: d.desc, icon: d.icon, tag: `Cấp ${this.passives[id]} → ${this.passives[id] + 1}` }, w: 2 });
-      }
-    });
-    const owned = (Object.keys(this.skills) as SkillId[]).filter((k) => this.skills[k].lv > 0).length;
-    if (owned < 6) {
-      SKILLS.filter((s) => this.skills[s.id].lv === 0).forEach((s) => {
-        pool.push({ c: { kind: "new", id: s.id, name: s.name, desc: s.desc, icon: s.icon, tag: "KỸ NĂNG MỚI" }, w: 4 });
-      });
-    }
-    // shuffle weighted
-    const picks: Choice[] = [];
-    const ev = [...evos].sort(() => Math.random() - 0.5);
-    while (picks.length < 3 && ev.length) picks.push(ev.pop()!);
-    const bag = [...pool];
-    while (picks.length < 3 && bag.length) {
-      const total = bag.reduce((s, b) => s + b.w, 0);
-      let r = Math.random() * total;
-      let idx = 0;
-      for (let i = 0; i < bag.length; i++) {
-        r -= bag[i].w;
-        if (r <= 0) {
-          idx = i;
-          break;
-        }
-      }
-      picks.push(bag[idx].c);
-      bag.splice(idx, 1);
-    }
-    if (picks.length === 0) picks.push({ kind: "heal", id: "heal", name: "Bữa Ăn Thịnh Soạn", desc: "Hồi 50% máu tối đa", icon: "heart", tag: "HỒI PHỤC" });
-    this.choices = picks;
   }
 
   private gainXp(v: number) {
@@ -889,22 +898,21 @@ export class Engine {
     // ---- BOLT ----
     const bolt = this.skills.bolt;
     if (bolt.lv > 0 && this.cds.bolt <= 0) {
-      const targets = this.nearestEnemies(6, 560);
+      const tuning = skillTuning("bolt", bolt.lv, bolt.evolved);
+      const targets = this.nearestEnemies(6, tuning.range);
       if (targets.length) {
-        const lv = bolt.lv;
         const ev = bolt.evolved;
-        const count = 1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0) + (ev ? 2 : 0);
-        const dmg = (8 + lv * 3.5) * (ev ? 2.6 : 1) * P;
-        for (let i = 0; i < count; i++) {
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
           const t = targets[i % targets.length];
-          const base = Math.atan2(t.y - this.py, t.x - this.px) + (i - (count - 1) / 2) * 0.16;
+          const base = Math.atan2(t.y - this.py, t.x - this.px) + (i - (tuning.count - 1) / 2) * 0.16;
           const sp = 480;
           this.shots.push({
             kind: "bolt", x: this.px, y: this.py - 14, vx: Math.cos(base) * sp, vy: Math.sin(base) * sp,
-            dmg, pierce: lv >= 5 || ev ? 99 : 0, life: 1.4, homing: ev, r: ev ? 13 : 8, spin: 0, t: 0, dur: 1, sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, hitIds: new Set(),
+            dmg, pierce: bolt.lv >= 5 || ev ? 99 : 0, life: 1.4, homing: ev, r: tuning.radius, spin: 0, t: 0, dur: 1, sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, hitIds: new Set(),
           });
         }
-        this.cds.bolt = Math.max(0.24, 0.8 - lv * 0.05) * C;
+        this.cds.bolt = tuning.cooldown * C;
         sfx.shoot();
       }
     }
@@ -912,15 +920,14 @@ export class Engine {
     // ---- ZAP ----
     const zap = this.skills.zap;
     if (zap.lv > 0 && this.cds.zap <= 0) {
-      const lv = zap.lv;
       const ev = zap.evolved;
-      const count = 1 + Math.floor(lv / 2) + (ev ? 3 : 0);
-      const dmg = (14 + lv * 6) * (ev ? 2.2 : 1) * P;
-      const targets = this.nearestEnemies(count + 8, 540);
+      const tuning = skillTuning("zap", zap.lv, ev);
+      const dmg = tuning.damage * P;
+      const targets = this.nearestEnemies(tuning.count + 8, tuning.range);
       if (targets.length) {
         const chosen: Enemy[] = [];
         const poolZ = [...targets];
-        for (let i = 0; i < Math.min(count, poolZ.length); i++) {
+        for (let i = 0; i < Math.min(tuning.count, poolZ.length); i++) {
           const idx = Math.floor(Math.random() * poolZ.length);
           chosen.push(poolZ.splice(idx, 1)[0]);
         }
@@ -938,7 +945,7 @@ export class Engine {
             }
           }
         }
-        this.cds.zap = Math.max(0.5, 1.5 - lv * 0.08) * C;
+        this.cds.zap = tuning.cooldown * C;
         sfx.zap();
         this.shake = Math.max(this.shake, 2);
       }
@@ -947,42 +954,40 @@ export class Engine {
     // ---- AURA ----
     const aura = this.skills.aura;
     if (aura.lv > 0 && this.cds.aura <= 0) {
-      const lv = aura.lv;
       const ev = aura.evolved;
-      const radius = 85 + lv * 12 + (ev ? 55 : 0);
-      const dmg = (6 + lv * 3) * (ev ? 2.4 : 1) * P;
+      const tuning = skillTuning("aura", aura.lv, ev);
+      const dmg = tuning.damage * P;
       let hitAny = false;
       for (const e of this.enemies) {
-        if (!e.dead && dist2(e.x, e.y, this.px, this.py) < (radius + e.r) * (radius + e.r)) {
+        if (!e.dead && dist2(e.x, e.y, this.px, this.py) < (tuning.radius + e.r) * (tuning.radius + e.r)) {
           this.damageEnemy(e, dmg);
           hitAny = true;
         }
       }
-      this.ring(this.px, this.py, 20, radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
+      this.ring(this.px, this.py, 20, tuning.radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
       if (hitAny) sfx.hit();
-      this.cds.aura = Math.max(0.45, 1.0 - lv * 0.05) * C;
+      this.cds.aura = tuning.cooldown * C;
     }
 
     // ---- BOOM ----
     const boom = this.skills.boom;
     if (boom.lv > 0 && this.cds.boom <= 0) {
-      const lv = boom.lv;
       const ev = boom.evolved;
-      const t = this.nearestEnemies(1, 620)[0];
+      const tuning = skillTuning("boom", boom.lv, ev);
+      const t = this.nearestEnemies(1, tuning.range)[0];
       if (t) {
-        const n = 1 + (lv >= 4 ? 1 : 0) + (ev ? 1 : 0);
-        const dmg = (12 + lv * 5) * (ev ? 2.3 : 1) * P;
-        for (let i = 0; i < n; i++) {
-          const off = (i - (n - 1) / 2) * 0.5;
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
+          const off = (i - (tuning.count - 1) / 2) * 0.5;
           const a = Math.atan2(t.y - this.py, t.x - this.px) + off;
           const d = clamp(Math.sqrt(dist2(t.x, t.y, this.px, this.py)), 120, 420);
           this.shots.push({
             kind: "boom", x: this.px, y: this.py - 10, vx: 0, vy: 0, dmg, pierce: 99, life: 3, homing: false,
-            r: ev ? 22 : 15, spin: Math.random() * 6, t: 0, dur: 0.5, sx: this.px, sy: this.py - 10,
+            r: tuning.radius, spin: Math.random() * 6, t: 0, dur: 0.5, sx: this.px, sy: this.py - 10,
             tx: this.px + Math.cos(a) * d, ty: this.py + Math.sin(a) * d, evolved: ev, hitIds: new Set(),
           });
         }
-        this.cds.boom = Math.max(0.7, 1.7 - lv * 0.09) * C;
+        this.cds.boom = tuning.cooldown * C;
         sfx.throwSound();
       }
     }
@@ -990,18 +995,16 @@ export class Engine {
     // ---- FROST ----
     const frost = this.skills.frost;
     if (frost.lv > 0 && this.cds.frost <= 0) {
-      const lv = frost.lv;
       const ev = frost.evolved;
-      const targets = this.nearestEnemies(14, 600);
+      const tuning = skillTuning("frost", frost.lv, ev);
+      const targets = this.nearestEnemies(14, tuning.range);
       if (targets.length) {
-        const count = 1 + Math.floor(lv / 2) + (ev ? 3 : 0);
-        const dmg = (10 + lv * 4) * (ev ? 2.2 : 1) * P;
-        const aoe = 70 + lv * 6 + (ev ? 45 : 0);
-        for (let i = 0; i < count; i++) {
+        const dmg = tuning.damage * P;
+        for (let i = 0; i < tuning.count; i++) {
           const t = targets[Math.floor(Math.random() * targets.length)];
-          this.frosts.push({ x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45, dmg, aoe });
+          this.frosts.push({ x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45, dmg, aoe: tuning.radius });
         }
-        this.cds.frost = Math.max(0.6, 1.4 - lv * 0.06) * C;
+        this.cds.frost = tuning.cooldown * C;
         sfx.frost();
       }
     }
@@ -1164,6 +1167,17 @@ export class Engine {
         s.sx = s.x;
         s.sy = s.y;
       }
+      if (Math.random() < Math.min(1, dt * 48)) {
+        const maxLife = s.kind === "bolt" ? 0.18 : 0.26;
+        this.trails.push({
+          x: s.x,
+          y: s.y,
+          life: maxLife,
+          maxLife,
+          size: s.kind === "bolt" ? (s.evolved ? 9 : 6) : (s.evolved ? 13 : 9),
+          color: s.evolved ? this.weaponSkin.glow : s.kind === "bolt" ? this.weaponSkin.bolt : this.weaponSkin.blade,
+        });
+      }
       if (s.x < 20 || s.x > WORLD - 20 || s.y < 20 || s.y > WORLD - 20) s.life = 0;
       // hits
       for (const e of this.enemies) {
@@ -1186,23 +1200,21 @@ export class Engine {
     /* --- orbit blades --- */
     const orbit = this.skills.orbit;
     if (orbit.lv > 0) {
-      const lv = orbit.lv;
       const ev = orbit.evolved;
-      const n = 2 + (lv >= 3 ? 1 : 0) + (lv >= 5 ? 1 : 0) + (ev ? 2 : 0);
-      const radius = 62 + lv * 5 + (ev ? 26 : 0);
-      const dmg = (7 + lv * 3) * (ev ? 2.3 : 1) * this.power();
-      const bspd = 2.4 + lv * 0.15;
-      this.orbitBlades = { n, radius, dmg, bspd, ev };
+      const tuning = skillTuning("orbit", orbit.lv, ev);
+      const dmg = tuning.damage * this.power();
+      const bspd = 2.4 + orbit.lv * 0.15;
+      this.orbitBlades = { n: tuning.count, radius: tuning.radius, dmg, bspd, ev };
       this.orbitPts = [];
-      for (let i = 0; i < n; i++) {
-        const a = this.orbitT * bspd + (i * Math.PI * 2) / n;
-        const bx = this.px + Math.cos(a) * radius;
-        const by = this.py - 8 + Math.sin(a) * radius * 0.82;
+      for (let i = 0; i < tuning.count; i++) {
+        const a = this.orbitT * bspd + (i * Math.PI * 2) / tuning.count;
+        const bx = this.px + Math.cos(a) * tuning.radius;
+        const by = this.py - 8 + Math.sin(a) * tuning.radius * 0.82;
         this.orbitPts.push({ x: bx, y: by, ev });
         for (const e of this.enemies) {
           if (e.dead || e.bladeCd > 0) continue;
           if (dist2(e.x, e.y, bx, by) < (e.r + (ev ? 22 : 15)) * (e.r + (ev ? 22 : 15))) {
-            e.bladeCd = 0.28;
+            e.bladeCd = tuning.cooldown;
             const ka = Math.atan2(e.y - this.py, e.x - this.px);
             this.damageEnemy(e, dmg, e.boss ? 0 : Math.cos(ka) * 10, e.boss ? 0 : Math.sin(ka) * 10);
           }
@@ -1274,6 +1286,9 @@ export class Engine {
       b.life -= dt;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
+      if (Math.random() < Math.min(1, dt * 24)) {
+        this.trails.push({ x: b.x, y: b.y, life: 0.16, maxLife: 0.16, size: b.r * 1.2, color: b.color });
+      }
       if (b.x < 20 || b.x > WORLD - 20 || b.y < 20 || b.y > WORLD - 20) b.life = 0;
       if (this.iframes <= 0 && dist2(b.x, b.y, this.px, this.py) < (b.r + 12) * (b.r + 12)) {
         b.life = 0;
@@ -1336,6 +1351,12 @@ export class Engine {
     }
 
     /* --- hud throttle --- */
+    this.particles = capFx(this.particles, 420);
+    this.dmgs = capFx(this.dmgs, 90);
+    this.zaps = capFx(this.zaps, 36);
+    this.rings = capFx(this.rings, 80);
+    this.trails = capFx(this.trails, 180);
+    this.telegraphs = capFx(this.telegraphs, 24);
     this.hudT -= dt;
     if (this.hudT <= 0) {
       this.hudT = 0.1;
@@ -1347,6 +1368,8 @@ export class Engine {
 
   private updateBoss(e: Enemy, dt: number) {
     const info = e.boss!;
+    const bulletDamage = bossProjectileDamage(this.stage, info.king);
+    const timing = bossAttackTiming(this.stage, info.king, info.arch);
     const a = Math.atan2(this.py - e.y, this.px - e.x);
     e.stateT -= dt;
     const cdMul = info.king ? 0.75 : 1;
@@ -1358,8 +1381,6 @@ export class Engine {
           if (e.stateT <= 0) {
             e.state = "charge";
             e.stateT = 0.65;
-            e.tx = Math.cos(a);
-            e.ty = Math.sin(a);
             sfx.throwSound();
           }
         } else if (e.state === "charge") {
@@ -1368,15 +1389,22 @@ export class Engine {
           if (Math.random() < dt * 40) this.puff(e.x + rand(-20, 20), e.y + rand(-20, 20), info.colors.M);
           if (e.stateT <= 0) {
             e.state = "";
-            e.stateT = rand(2.4, 3.2) * cdMul;
+            e.stateT = timing.cooldown + rand(0, 0.8) * cdMul;
           }
         } else {
           e.x += Math.cos(a) * e.speed * dt;
           e.y += Math.sin(a) * e.speed * dt;
           if (e.stateT <= 0) {
             e.state = "tele";
-            e.stateT = 0.5;
+            e.stateT = timing.warning;
             e.flash = 0.4;
+            const aim = aimVector(e.x, e.y, this.px, this.py);
+            e.tx = aim.x;
+            e.ty = aim.y;
+            this.telegraphs.push({
+              x: e.x, y: e.y, tx: this.px, ty: this.py, radius: 74,
+              life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "charge",
+            });
             sfx.wave();
           }
         }
@@ -1386,15 +1414,26 @@ export class Engine {
         // bắn phá
         e.x += Math.cos(a) * e.speed * 0.8 * dt;
         e.y += Math.sin(a) * e.speed * 0.8 * dt;
-        if (e.stateT <= 0) {
-          e.stateT = Math.max(1.2, 2.4 - this.stage * 0.008) * cdMul;
+        if (e.state === "tele") {
+          if (e.stateT > 0) break;
+          e.state = "";
+          e.stateT = timing.cooldown;
           const n = 10 + Math.floor(this.stage / 8);
           for (let i = 0; i < n; i++) {
             const ba = (i / n) * Math.PI * 2 + e.spiralA;
-            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 165, vy: Math.sin(ba) * 165, r: 7, dmg: info.dmg * 0.55, life: 4, color: info.colors.X });
+            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 165, vy: Math.sin(ba) * 165, r: 7, dmg: bulletDamage, life: 4, color: info.colors.X });
           }
           e.spiralA += 0.35;
           sfx.shoot();
+        } else if (e.stateT <= 0) {
+          e.state = "tele";
+          e.stateT = timing.warning;
+          e.flash = 0.35;
+          this.telegraphs.push({
+            x: e.x, y: e.y, radius: 118,
+            life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "burst",
+          });
+          sfx.wave();
         }
         break;
       }
@@ -1403,10 +1442,10 @@ export class Engine {
         e.x += Math.cos(a) * e.speed * 0.6 * dt;
         e.y += Math.sin(a) * e.speed * 0.6 * dt;
         if (e.stateT <= 0) {
-          e.stateT = 2.8 * cdMul;
+          e.stateT = timing.cooldown;
           for (let i = 0; i < 3 + Math.floor(this.stage / 25); i++) {
             const sa = Math.random() * Math.PI * 2;
-            const m = this.makeEnemy(this.biome.mobKind, this.biome.mob, e.x + Math.cos(sa) * 90, e.y + Math.sin(sa) * 90, this.stage, 3, false);
+            const m = this.makeEnemy(this.biome.mobKind, this.biome.mob, e.x + Math.cos(sa) * 90, e.y + Math.sin(sa) * 90, this.stage, 3, false, true);
             this.enemies.push(m);
             this.puff(m.x, m.y, info.colors.M);
           }
@@ -1421,10 +1460,10 @@ export class Engine {
         e.y += Math.sin(a) * e.speed * 0.7 * dt;
         e.spiralA += dt * 3.2;
         e.tx += dt; // tx dùng làm accumulator nhịp bắn
-        if (e.tx > 0.13) {
+        if (e.tx > timing.pulse) {
           e.tx = 0;
           for (const off of [0, Math.PI]) {
-            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.spiralA + off) * 185, vy: Math.sin(e.spiralA + off) * 185, r: 6, dmg: info.dmg * 0.5, life: 3.4, color: info.colors.X });
+            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.spiralA + off) * 185, vy: Math.sin(e.spiralA + off) * 185, r: 6, dmg: bulletDamage, life: 3.4, color: info.colors.X });
           }
           if (Math.random() < 0.2) sfx.shoot();
         }
@@ -1436,8 +1475,6 @@ export class Engine {
           if (e.stateT <= 0) {
             e.state = "jump";
             e.stateT = 0.4;
-            e.tx = this.px;
-            e.ty = this.py;
           }
         } else if (e.state === "jump") {
           const k = 1 - e.stateT / 0.4;
@@ -1445,13 +1482,13 @@ export class Engine {
           e.y += (e.ty - e.y) * Math.min(1, k * 1.6) * dt * 8;
           if (e.stateT <= 0) {
             e.state = "";
-            e.stateT = 3.4 * cdMul;
+            e.stateT = timing.cooldown;
             this.shake = 14;
             sfx.bossRoar();
             const n = 14;
             for (let i = 0; i < n; i++) {
               const ba = (i / n) * Math.PI * 2;
-              this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 210, vy: Math.sin(ba) * 210, r: 7, dmg: info.dmg * 0.6, life: 3, color: info.colors.X });
+              this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 210, vy: Math.sin(ba) * 210, r: 7, dmg: bulletDamage, life: 3, color: info.colors.X });
             }
             this.ring(e.x, e.y, 20, 170, 0.5, info.colors.X, 6);
             this.burst(e.x, e.y, 16, info.colors.D, 220);
@@ -1461,8 +1498,14 @@ export class Engine {
           e.y += Math.sin(a) * e.speed * dt;
           if (e.stateT <= 0) {
             e.state = "tele";
-            e.stateT = 0.45;
+            e.stateT = timing.warning;
+            e.tx = this.px;
+            e.ty = this.py;
             e.flash = 0.4;
+            this.telegraphs.push({
+              x: e.tx, y: e.ty, radius: 170,
+              life: timing.warning, maxLife: timing.warning, color: info.colors.X, kind: "slam",
+            });
             sfx.wave();
           }
         }
@@ -1478,20 +1521,24 @@ export class Engine {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
     }
-    this.particles = this.particles.filter((p) => p.life > 0);
+    this.particles = capFx(this.particles.filter((p) => p.life > 0), 420);
     for (const d of this.dmgs) {
       d.life -= dt;
       d.y += d.vy * dt;
       d.vy *= 0.94;
     }
-    this.dmgs = this.dmgs.filter((d) => d.life > 0);
+    this.dmgs = capFx(this.dmgs.filter((d) => d.life > 0), 90);
     for (const z of this.zaps) z.life -= dt;
-    this.zaps = this.zaps.filter((z) => z.life > 0);
+    this.zaps = capFx(this.zaps.filter((z) => z.life > 0), 36);
     for (const r of this.rings) {
       r.life -= dt;
       r.r += (r.maxR - r.r) * Math.min(1, dt * 12);
     }
-    this.rings = this.rings.filter((r) => r.life > 0);
+    this.rings = capFx(this.rings.filter((r) => r.life > 0), 80);
+    for (const trail of this.trails) trail.life -= dt;
+    this.trails = capFx(this.trails.filter((trail) => trail.life > 0), 180);
+    for (const telegraph of this.telegraphs) telegraph.life -= dt;
+    this.telegraphs = capFx(this.telegraphs.filter((telegraph) => telegraph.life > 0), 24);
     // ambient
     const type = this.biome.ambient.type;
     for (const a of this.ambients) {
@@ -1523,6 +1570,8 @@ export class Engine {
     this.dmgs = [];
     this.zaps = [];
     this.rings = [];
+    this.trails = [];
+    this.telegraphs = [];
     this.frosts = [];
     this.bannerObj = null;
   }
@@ -1557,6 +1606,7 @@ export class Engine {
 
     this.drawGround(ctx, cx, cy, vw, vh);
     this.drawDecors(ctx, cx, cy, vw, vh);
+    this.drawTelegraphs(ctx);
     this.drawPickups(ctx, cx, cy, vw, vh);
 
     // y-sorted entities
@@ -1573,6 +1623,7 @@ export class Engine {
     drawList.sort((a, b) => a.y - b.y);
     for (const d of drawList) d.fn();
 
+    this.drawTrails(ctx);
     this.drawShots(ctx);
     this.drawOrbit(ctx);
     this.drawZaps(ctx);
@@ -1597,7 +1648,7 @@ export class Engine {
       ctx.fillRect(0, 0, vw, vh);
     }
     if (this.phase === "playing" && this.hp / this.maxHp < 0.3) {
-      const p = 0.12 + Math.sin(performance.now() / 240) * 0.06;
+      const p = 0.095 + Math.sin(performance.now() / 240) * 0.035;
       const g = ctx.createRadialGradient(vw / 2, vh / 2, Math.min(vw, vh) * 0.36, vw / 2, vh / 2, Math.max(vw, vh) * 0.72);
       g.addColorStop(0, "rgba(200,20,40,0)");
       g.addColorStop(1, `rgba(200,20,40,${p})`);
@@ -1623,6 +1674,23 @@ export class Engine {
           ctx.fillStyle = g[1];
           ctx.fillRect(tx * T + ((h >>> 3) % 20) + 4, ty * T + ((h >>> 7) % 20) + 4, 3, 3);
         }
+      }
+    }
+    // Mảng màu lớn giúp từng vùng sinh cảnh có chiều sâu nhưng vẫn giữ nét pixel-art.
+    const P = 160;
+    const px0 = Math.max(0, Math.floor(cx / P));
+    const py0 = Math.max(0, Math.floor(cy / P));
+    const px1 = Math.min(Math.ceil(WORLD / P), Math.ceil((cx + vw) / P));
+    const py1 = Math.min(Math.ceil(WORLD / P), Math.ceil((cy + vh) / P));
+    for (let py = py0; py < py1; py++) {
+      for (let px = px0; px < px1; px++) {
+        const h = ((px * 83492791) ^ (py * 297657976)) >>> 0;
+        if (h % 3 === 0) continue;
+        const inset = 18 + (h % 28);
+        ctx.fillStyle = hexToRgba(h % 2 ? g[1] : g[2], 0.075);
+        ctx.fillRect(px * P + inset, py * P + inset, P - inset * 1.35, P - inset * 1.5);
+        ctx.fillStyle = hexToRgba(g[2], 0.11);
+        ctx.fillRect(px * P + inset + 10, py * P + inset + 8, 18 + (h % 34), 3);
       }
     }
     // hàng rào biên
@@ -1757,6 +1825,11 @@ export class Engine {
       } else if (p.kind === "core") {
         const pulse = 1 + Math.sin(p.t * 7) * 0.14;
         const s = 20 * pulse;
+        const beacon = ctx.createLinearGradient(x, y - 52, x, y + 5);
+        beacon.addColorStop(0, "rgba(255,157,46,0)");
+        beacon.addColorStop(1, "rgba(255,157,46,0.28)");
+        ctx.fillStyle = beacon;
+        ctx.fillRect(x - 4, y - 52, 8, 56);
         ctx.drawImage(getItemSprite("core"), x - s / 2, y - s / 2 - 2, s, s);
       } else {
         ctx.drawImage(getItemSprite("heart"), x - 9, y - 8, 18, 16);
@@ -1857,6 +1930,57 @@ export class Engine {
     ctx.drawImage(spr, x - w / 2, y, w, h);
   }
 
+  private drawTrails(ctx: CanvasRenderingContext2D) {
+    for (const trail of this.trails) {
+      const alpha = clamp(trail.life / trail.maxLife, 0, 1);
+      const size = Math.max(2, trail.size * alpha);
+      ctx.fillStyle = hexToRgba(trail.color, alpha * 0.2);
+      ctx.fillRect(trail.x - size, trail.y - size, size * 2, size * 2);
+      ctx.fillStyle = hexToRgba(trail.color, alpha * 0.62);
+      ctx.fillRect(trail.x - size * 0.45, trail.y - size * 0.45, size * 0.9, size * 0.9);
+    }
+  }
+
+  private drawTelegraphs(ctx: CanvasRenderingContext2D) {
+    for (const telegraph of this.telegraphs) {
+      const alpha = telegraphAlpha(telegraph.life, telegraph.maxLife);
+      const progress = 1 - telegraph.life / telegraph.maxLife;
+      const radius = telegraph.radius * (0.72 + progress * 0.28);
+      ctx.save();
+      ctx.strokeStyle = hexToRgba(telegraph.color, alpha);
+      ctx.fillStyle = hexToRgba(telegraph.color, alpha * 0.13);
+      ctx.lineWidth = telegraph.kind === "slam" ? 5 : 4;
+      ctx.setLineDash(telegraph.kind === "burst" ? [10, 8] : [18, 10]);
+      ctx.beginPath();
+      ctx.arc(telegraph.x, telegraph.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (telegraph.kind === "charge" && telegraph.tx !== undefined && telegraph.ty !== undefined) {
+        ctx.setLineDash([16, 12]);
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = hexToRgba(telegraph.color, alpha * 0.22);
+        ctx.beginPath();
+        ctx.moveTo(telegraph.x, telegraph.y);
+        ctx.lineTo(telegraph.tx, telegraph.ty);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = hexToRgba("#fff3d0", alpha * 0.82);
+        ctx.stroke();
+      } else if (telegraph.kind === "slam") {
+        ctx.setLineDash([]);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(telegraph.x - radius * 0.45, telegraph.y);
+        ctx.lineTo(telegraph.x + radius * 0.45, telegraph.y);
+        ctx.moveTo(telegraph.x, telegraph.y - radius * 0.45);
+        ctx.lineTo(telegraph.x, telegraph.y + radius * 0.45);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   private drawShots(ctx: CanvasRenderingContext2D) {
     const wc = this.weaponSkin;
     for (const s of this.shots) {
@@ -1932,14 +2056,14 @@ export class Engine {
   private drawZaps(ctx: CanvasRenderingContext2D) {
     for (const z of this.zaps) {
       const a = clamp(z.life / 0.16, 0, 1);
-      ctx.strokeStyle = `rgba(207,239,255,${a})`;
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(92,142,255,${a * 0.42})`;
+      ctx.lineWidth = 12;
       ctx.beginPath();
       ctx.moveTo(z.pts[0].x, z.pts[0].y);
       for (let i = 1; i < z.pts.length; i++) ctx.lineTo(z.pts[i].x, z.pts[i].y);
       ctx.stroke();
-      ctx.strokeStyle = `rgba(120,180,255,${a * 0.7})`;
-      ctx.lineWidth = 9;
+      ctx.strokeStyle = `rgba(207,239,255,${a})`;
+      ctx.lineWidth = 3;
       ctx.stroke();
     }
   }

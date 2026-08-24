@@ -632,6 +632,7 @@ const TAG_STYLE: Record<Choice["kind"], string> = {
   new: "bg-[#63e6ff] text-[#083344]",
   up: "bg-[#7ce06a] text-[#14350f]",
   passive: "bg-[#c9a0e8] text-[#2c1040]",
+  mastery: "bg-[#ff9d2e] text-[#401d04]",
   heal: "bg-[#ff8095] text-[#4a0816]",
 };
 const TILTS = ["-3deg", "0deg", "3deg"];

@@ -148,6 +148,7 @@ export const biomeOf = (stage: number): Biome => BIOMES[Math.min(9, Math.floor((
 
 export type SkillId = "bolt" | "orbit" | "aura" | "zap" | "boom" | "frost";
 export type PassiveId = "speed" | "heart" | "power" | "haste" | "magnet" | "regen";
+export type MasteryId = "force" | "vitality" | "swiftness" | "vacuum";
 
 export interface SkillDef {
   id: SkillId;
@@ -225,13 +226,28 @@ export const PASSIVES: PassiveDef[] = [
   { id: "regen", name: "Thuốc Tiên", icon: "regen", desc: "+0.7 hồi máu mỗi giây" },
 ];
 
+export interface MasteryDef {
+  id: MasteryId;
+  name: string;
+  icon: string;
+  desc: string;
+  max: number;
+}
+
+export const MASTERY_DEFS: MasteryDef[] = [
+  { id: "force", name: "Uy Lực", icon: "power", desc: "+3% sát thương", max: 30 },
+  { id: "vitality", name: "Sinh Lực", icon: "heart", desc: "+6 máu tối đa và hồi 6", max: 30 },
+  { id: "swiftness", name: "Thân Pháp", icon: "speed", desc: "+1% tốc độ", max: 30 },
+  { id: "vacuum", name: "Hấp Lực", icon: "magnet", desc: "+6% phạm vi nhặt", max: 30 },
+];
+
 export const skillDef = (id: SkillId) => SKILLS.find((s) => s.id === id)!;
 export const passiveDef = (id: PassiveId) => PASSIVES.find((p) => p.id === id)!;
 
 /* ============================ LEVEL / CHOICES ============================ */
 
 export interface Choice {
-  kind: "new" | "up" | "evolve" | "passive" | "heal";
+  kind: "new" | "up" | "evolve" | "passive" | "mastery" | "heal";
   id: string;
   name: string;
   desc: string;

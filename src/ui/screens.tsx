@@ -2,8 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import type { GameStats, HudData } from "../game/engine";
 import type { Choice } from "../game/data";
 import { TOTAL_STAGES } from "../game/data";
-import type { HeroSkinDef, SaveData, WeaponSkinDef } from "../game/shop";
-import { HERO_SKINS, WEAPON_SKINS, TIER_COLORS, TIER_NAMES } from "../game/shop";
+import type { HeroSkinDef, MetaStats, SaveData, UpgradeId, WeaponSkinDef } from "../game/shop";
+import {
+  HERO_SKINS,
+  TIER_COLORS,
+  TIER_NAMES,
+  UPGRADES,
+  WEAPON_SKINS,
+  upgradeCost,
+  upgradeStats,
+} from "../game/shop";
+import { weaponPaletteAt } from "../game/palette";
+import { claimableGems, questViews } from "../game/quests";
 import { getHeroSprite } from "../game/sprites";
 import { Icon } from "./icons";
 
@@ -353,8 +363,20 @@ export function Banner({ banner }: { banner: { text: string; sub: string; key: n
 
 /* ================= MENU ================= */
 
-export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onShop: () => void; gold: number }) {
+export function MenuScreen({
+  onStart,
+  onShop,
+  save,
+  day,
+}: {
+  onStart: () => void;
+  onShop: () => void;
+  save: SaveData;
+  day: string;
+}) {
   const best = parseInt(localStorage.getItem("tvqv_best") || "0", 10);
+  const pendingGems = claimableGems(save.quests, day);
+  const questsLeft = questViews(save.quests, day).filter((quest) => !quest.claimed).length;
   return (
     <div className="absolute inset-0 z-30 flex items-stretch justify-between bg-gradient-to-r from-[#140d06f2] via-[#140d06c8] to-[#140d0640]">
       {/* trái: tiêu đề */}
@@ -379,15 +401,30 @@ export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onS
             <Icon name="play" className="w-5 h-5" />
             BẮT ĐẦU
           </button>
-          <button onClick={onShop} className="btn-ghost text-base flex items-center gap-2.5 !py-3.5">
+          <button onClick={onShop} className="btn-ghost text-base flex items-center gap-2.5 !py-3.5 relative">
             <Icon name="bag" className="w-5 h-5 text-[#ffd94a]" />
             CỬA HÀNG
+            {pendingGems > 0 && (
+              <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full bg-[#63e6ff] text-[#083344] font-display text-[10px] blink-soft">
+                +{pendingGems}
+              </span>
+            )}
           </button>
           <span className="panel-deep px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-[#ffd94a]">
             <Icon name="coin" className="w-5 h-5" />
-            {gold.toLocaleString("vi")}
+            {save.gold.toLocaleString("vi")}
+          </span>
+          <span className="panel-deep px-4 py-2.5 flex items-center gap-2 text-sm font-bold text-[#63e6ff]">
+            <Icon name="gem" className="w-5 h-5" />
+            {save.gems.toLocaleString("vi")}
           </span>
         </div>
+        {questsLeft > 0 && (
+          <p className="mt-4 text-[13px] text-[#d9bd8a] flex items-center gap-2">
+            <Icon name="gem" className="w-4 h-4 text-[#63e6ff]" />
+            Còn <b className="text-[#63e6ff]">{questsLeft} nhiệm vụ ngày</b> chưa nhận — kim cương để đổi skin Huyền Thoại
+          </p>
+        )}
         {best > 0 && (
           <p className="mt-5 text-[13px] text-[#d9bd8a] flex items-center gap-2">
             <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
@@ -421,8 +458,9 @@ export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onS
             <li className="flex items-center gap-2.5">
               <Icon name="coin" className="w-5 h-5 text-[#ffd94a] shrink-0" />
               <span>
-                Sống sót mỗi giây, qua đợt, hạ trùm đều ra <b className="text-[#ffd94a]">vàng</b> — vào cửa hàng sắm{" "}
-                <b className="text-[#ffe9b8]">40 skin nhân vật</b> và <b className="text-[#ffe9b8]">20 skin vũ khí</b>
+                <b className="text-[#ffd94a]">Vàng</b> sắm skin và nâng chỉ số vĩnh viễn •{" "}
+                <b className="text-[#63e6ff]">kim cương</b> từ nhiệm vụ ngày đổi{" "}
+                <b className="text-[#ffe9b8]">skin Huyền Thoại</b> có nhiều chỉ số nhất
               </span>
             </li>
             <li className="flex items-center gap-2.5">
@@ -441,7 +479,7 @@ export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onS
           </ul>
         </div>
         <div className="panel p-4 anim-rise" style={{ animationDelay: "0.16s" }}>
-          <div className="font-display text-[13px] text-[#ffd94a] mb-3">6 KỸ NĂNG • 6 BỊ ĐỘNG</div>
+          <div className="font-display text-[13px] text-[#ffd94a] mb-3">6 VŨ KHÍ × 6 BẬC • 6 BỊ ĐỘNG</div>
           <div className="grid grid-cols-6 gap-2 text-[#ffe9b8]">
             {["bolt", "orbit", "aura", "zap", "boom", "frost"].map((s) => (
               <div key={s} className="panel-deep aspect-square flex items-center justify-center">
@@ -478,6 +516,7 @@ function HeroPreview({ skin }: { skin: HeroSkinDef }) {
   return <canvas ref={ref} width={72} height={80} style={{ imageRendering: "pixelated" }} />;
 }
 
+/** Bản xem thử chạy động để người chơi thấy trước vũ khí sẽ đổi qua những tông màu nào. */
 function WeaponPreview({ skin }: { skin: WeaponSkinDef }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -485,60 +524,254 @@ function WeaponPreview({ skin }: { skin: WeaponSkinDef }) {
     if (!cv) return;
     const ctx = cv.getContext("2d")!;
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    // quầng sáng
-    const g = ctx.createRadialGradient(44, 40, 4, 44, 40, 34);
-    g.addColorStop(0, skin.aura + "55");
-    g.addColorStop(1, skin.aura + "00");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 88, 80);
-    // hai tia chéo
-    for (const [ang, len] of [
-      [-0.5, 30],
-      [0.5, 30],
-    ] as const) {
+    let raf = 0;
+    const start = performance.now();
+    const render = (now: number) => {
+      const pal = weaponPaletteAt(skin.moods, (now - start) / 1000);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      const g = ctx.createRadialGradient(44, 40, 4, 44, 40, 34);
+      g.addColorStop(0, pal.aura + "55");
+      g.addColorStop(1, pal.aura + "00");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 88, 80);
+      for (const [ang, len] of [
+        [-0.5, 30],
+        [0.5, 30],
+      ] as const) {
+        ctx.save();
+        ctx.translate(44, 40);
+        ctx.rotate(ang);
+        ctx.fillStyle = pal.bolt;
+        ctx.fillRect(-len, -4, len * 2, 8);
+        ctx.fillStyle = pal.core;
+        ctx.fillRect(-len + 5, -2, len * 1.4, 4);
+        ctx.restore();
+      }
       ctx.save();
       ctx.translate(44, 40);
-      ctx.rotate(ang);
-      ctx.fillStyle = skin.bolt;
-      ctx.fillRect(-len, -4, len * 2, 8);
-      ctx.fillStyle = skin.core;
-      ctx.fillRect(-len + 5, -2, len * 1.4, 4);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = pal.blade;
+      ctx.fillRect(-16, -3, 32, 6);
+      ctx.fillRect(-3, -16, 6, 32);
+      ctx.fillStyle = pal.blade2;
+      ctx.fillRect(-13, -1.5, 26, 3);
       ctx.restore();
-    }
-    // kiếm xoay
-    ctx.save();
-    ctx.translate(44, 40);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = skin.blade;
-    ctx.fillRect(-16, -3, 32, 6);
-    ctx.fillRect(-3, -16, 6, 32);
-    ctx.fillStyle = skin.blade2;
-    ctx.fillRect(-13, -1.5, 26, 3);
-    ctx.restore();
-    ctx.fillStyle = skin.glow;
-    ctx.fillRect(41, 37, 6, 6);
+      ctx.fillStyle = pal.glow;
+      ctx.fillRect(41, 37, 6, 6);
+      raf = requestAnimationFrame(render);
+    };
+    raf = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(raf);
   }, [skin]);
   return <canvas ref={ref} width={88} height={80} style={{ imageRendering: "pixelated" }} />;
 }
 
-export function ShopScreen({
-  gold,
+/** Thẻ chỉ số phụ hiện trên skin có buff. */
+function StatChips({ stats }: { stats: MetaStats }) {
+  const parts: string[] = [];
+  if (stats.power) parts.push(`+${Math.round(stats.power * 100)}% dame`);
+  if (stats.maxHp) parts.push(`+${stats.maxHp} máu`);
+  if (stats.speed) parts.push(`+${Math.round(stats.speed * 100)}% tốc`);
+  if (stats.haste) parts.push(`-${Math.round(stats.haste * 100)}% hồi chiêu`);
+  if (stats.magnet) parts.push(`+${Math.round(stats.magnet * 100)}% hút`);
+  if (stats.gold) parts.push(`+${Math.round(stats.gold * 100)}% vàng`);
+  if (parts.length === 0) {
+    return <div className="mt-1 text-[10.5px] text-[#8a6a44] text-center">Không cộng chỉ số</div>;
+  }
+  return (
+    <div className="mt-1 text-[10.5px] text-[#7ce06a] text-center leading-tight">{parts.join(" • ")}</div>
+  );
+}
+
+function CurrencyPill({ icon, value, color }: { icon: string; value: number; color: string }) {
+  return (
+    <span className="panel-deep px-3 py-1.5 flex items-center gap-1.5 font-bold tabular-nums" style={{ color }}>
+      <Icon name={icon} className="w-[18px] h-[18px]" />
+      {value.toLocaleString("vi")}
+    </span>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="btn-ghost !py-1.5 !text-[12.5px] whitespace-nowrap"
+      style={
+        active
+          ? { color: "#2c1a0c", background: "linear-gradient(180deg,#ffe08a,#d9932a)", borderColor: "#7a4d22" }
+          : undefined
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+/* --------------------------- BẢNG NÂNG CẤP CHỈ SỐ --------------------------- */
+
+function UpgradePanel({
   save,
+  onUpgrade,
+}: {
+  save: SaveData;
+  onUpgrade: (id: UpgradeId, cost: number) => void;
+}) {
+  const total = upgradeStats(save.upgrades);
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {UPGRADES.map((def, i) => {
+        const level = Math.min(def.max, save.upgrades[def.id] ?? 0);
+        const maxed = level >= def.max;
+        const cost = upgradeCost(def, level);
+        const affordable = !maxed && save.gold >= cost;
+        return (
+          <div
+            key={def.id}
+            className="card-in panel-deep p-3.5 flex flex-col"
+            style={{ animationDelay: `${Math.min(i * 0.04, 0.3)}s` }}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="panel-deep w-10 h-10 flex items-center justify-center shrink-0">
+                <Icon name={def.icon} className="w-6 h-6 text-[#ffd94a]" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-display text-[13px] text-[#ffe9b8]">{def.name}</div>
+                <div className="text-[11.5px] text-[#d9bd8a] leading-tight">{def.desc}</div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-1">
+              {Array.from({ length: def.max }, (_, slot) => (
+                <span
+                  key={slot}
+                  className={`h-2.5 flex-1 border ${
+                    slot < level ? "bg-[#7ce06a] border-[#4ca83f]" : "bg-[#2c1a0c] border-[#6b4423]"
+                  }`}
+                />
+              ))}
+              <span className="ml-1.5 text-[11px] font-bold tabular-nums text-[#d9bd8a]">
+                {level}/{def.max}
+              </span>
+            </div>
+            <button
+              onClick={() => onUpgrade(def.id, cost)}
+              disabled={maxed || !affordable}
+              className={`mt-3 w-full !py-1.5 !text-[12px] flex items-center justify-center gap-1.5 ${maxed ? "btn-ghost" : "btn"}`}
+            >
+              {maxed ? (
+                "TỐI ĐA"
+              ) : (
+                <>
+                  <Icon name="coin" className="w-3.5 h-3.5" />
+                  {cost.toLocaleString("vi")}
+                </>
+              )}
+            </button>
+          </div>
+        );
+      })}
+      <div className="panel-deep p-3.5 sm:col-span-2 lg:col-span-3">
+        <div className="font-display text-[12px] text-[#ffd94a] mb-1.5">TỔNG BUFF ĐANG CÓ</div>
+        <StatChips stats={total} />
+        <div className="mt-2 text-[11.5px] text-[#8a6a44]">
+          Nâng cấp giữ vĩnh viễn qua mọi trận. Buff cố ý để nhẹ tay: gom hết cả sáu nhánh cũng chỉ khoảng
+          +10% sát thương, +40 máu và +7,5% tốc chạy.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ NHIỆM VỤ NGÀY ------------------------------ */
+
+function QuestPanel({
+  save,
+  day,
+  onClaim,
+}: {
+  save: SaveData;
+  day: string;
+  onClaim: (id: string) => void;
+}) {
+  const quests = questViews(save.quests, day);
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {quests.map((quest, i) => {
+        const pct = Math.min(100, (quest.done / quest.target) * 100);
+        return (
+          <div
+            key={quest.id}
+            className="card-in panel-deep p-3.5 flex flex-col"
+            style={{
+              animationDelay: `${Math.min(i * 0.05, 0.3)}s`,
+              borderColor: quest.complete && !quest.claimed ? "#63e6ff" : undefined,
+            }}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="panel-deep w-10 h-10 flex items-center justify-center shrink-0">
+                <Icon name={quest.icon} className="w-6 h-6 text-[#63e6ff]" />
+              </div>
+              <div className="min-w-0">
+                <div className="font-display text-[13px] text-[#ffe9b8]">{quest.title}</div>
+                <div className="text-[11.5px] text-[#d9bd8a] leading-tight">{quest.desc}</div>
+              </div>
+            </div>
+            <div className="mt-3 bar-outer h-[10px]">
+              <div
+                className="bar-fill"
+                style={{ width: `${pct}%`, background: "linear-gradient(180deg,#9beaff,#2f8fb5)" }}
+              />
+            </div>
+            <div className="mt-1 flex items-center justify-between text-[11px] tabular-nums text-[#d9bd8a]">
+              <span>
+                {quest.done.toLocaleString("vi")}/{quest.target.toLocaleString("vi")}
+              </span>
+              <span className="flex items-center gap-1 text-[#63e6ff] font-bold">
+                <Icon name="gem" className="w-3.5 h-3.5" />+{quest.gems}
+              </span>
+            </div>
+            <button
+              onClick={() => onClaim(quest.id)}
+              disabled={!quest.complete || quest.claimed}
+              className={`mt-2.5 w-full !py-1.5 !text-[12px] ${quest.complete && !quest.claimed ? "btn" : "btn-ghost"}`}
+            >
+              {quest.claimed ? "ĐÃ NHẬN" : quest.complete ? "NHẬN KIM CƯƠNG" : "ĐANG LÀM"}
+            </button>
+          </div>
+        );
+      })}
+      <div className="panel-deep p-3.5 sm:col-span-2 lg:col-span-3 text-[11.5px] text-[#8a6a44]">
+        Ba nhiệm vụ đổi mới mỗi ngày. <b className="text-[#63e6ff]">Kim cương</b> chỉ kiếm được ở đây và chỉ
+        dùng để đổi skin <b className="text-[#ffd94a]">Huyền Thoại</b> — thứ đắt nhất và cộng nhiều chỉ số nhất.
+        Tiến độ cộng dồn sau mỗi màn đã qua và sau khi kết thúc trận.
+      </div>
+    </div>
+  );
+}
+
+export function ShopScreen({
+  save,
+  day,
   onBuy,
   onEquip,
+  onUpgrade,
+  onClaim,
   onClose,
 }: {
-  gold: number;
   save: SaveData;
-  onBuy: (kind: "hero" | "weapon", id: string, price: number) => void;
+  day: string;
+  onBuy: (kind: "hero" | "weapon", id: string) => void;
   onEquip: (kind: "hero" | "weapon", id: string) => void;
+  onUpgrade: (id: UpgradeId, cost: number) => void;
+  onClaim: (id: string) => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<"hero" | "weapon">("hero");
-  const items = (tab === "hero" ? HERO_SKINS : WEAPON_SKINS) as (HeroSkinDef | WeaponSkinDef)[];
-  const owned = tab === "hero" ? save.heroOwned : save.weaponOwned;
-  const equipped = tab === "hero" ? save.hero : save.weapon;
+  const [tab, setTab] = useState<"hero" | "weapon" | "upgrade" | "quest">("hero");
+  const skinTab = tab === "hero" || tab === "weapon";
+  const items = (tab === "weapon" ? WEAPON_SKINS : HERO_SKINS) as (HeroSkinDef | WeaponSkinDef)[];
+  const owned = tab === "weapon" ? save.weaponOwned : save.heroOwned;
+  const equipped = tab === "weapon" ? save.weapon : save.hero;
+  const pendingGems = claimableGems(save.quests, day);
 
   return (
     <div className="absolute inset-0 z-40 bg-[#0c0704]/85 flex items-center justify-center p-3 md:p-6">
@@ -547,35 +780,23 @@ export function ShopScreen({
         <div className="flex items-center gap-3 px-4 md:px-6 py-3 border-b-[3px] border-[#6b4423] flex-wrap">
           <Icon name="bag" className="w-7 h-7 text-[#ffd94a]" />
           <div className="font-display text-2xl text-[#ffd94a] title-glow">CỬA HÀNG</div>
-          <div className="flex gap-2 ml-2">
-            <button
-              onClick={() => setTab("hero")}
-              className="btn-ghost !py-1.5 !text-[13px]"
-              style={
-                tab === "hero"
-                  ? { color: "#2c1a0c", background: "linear-gradient(180deg,#ffe08a,#d9932a)", borderColor: "#7a4d22" }
-                  : undefined
-              }
-            >
+          <div className="flex gap-2 ml-2 flex-wrap">
+            <TabButton active={tab === "hero"} onClick={() => setTab("hero")}>
               NHÂN VẬT ({save.heroOwned.length}/{HERO_SKINS.length})
-            </button>
-            <button
-              onClick={() => setTab("weapon")}
-              className="btn-ghost !py-1.5 !text-[13px]"
-              style={
-                tab === "weapon"
-                  ? { color: "#2c1a0c", background: "linear-gradient(180deg,#ffe08a,#d9932a)", borderColor: "#7a4d22" }
-                  : undefined
-              }
-            >
+            </TabButton>
+            <TabButton active={tab === "weapon"} onClick={() => setTab("weapon")}>
               VŨ KHÍ ({save.weaponOwned.length}/{WEAPON_SKINS.length})
-            </button>
+            </TabButton>
+            <TabButton active={tab === "upgrade"} onClick={() => setTab("upgrade")}>
+              NÂNG CẤP
+            </TabButton>
+            <TabButton active={tab === "quest"} onClick={() => setTab("quest")}>
+              NHIỆM VỤ{pendingGems > 0 ? ` (+${pendingGems})` : ""}
+            </TabButton>
           </div>
-          <div className="ml-auto flex items-center gap-3">
-            <span className="panel-deep px-3.5 py-1.5 flex items-center gap-2 font-bold text-[#ffd94a] tabular-nums">
-              <Icon name="coin" className="w-5 h-5" />
-              {gold.toLocaleString("vi")}
-            </span>
+          <div className="ml-auto flex items-center gap-2.5">
+            <CurrencyPill icon="coin" value={save.gold} color="#ffd94a" />
+            <CurrencyPill icon="gem" value={save.gems} color="#63e6ff" />
             <button onClick={onClose} className="btn-ghost !px-3 !py-1.5 font-display text-[13px]">
               ĐÓNG
             </button>
@@ -583,67 +804,88 @@ export function ShopScreen({
         </div>
 
         <div className="px-4 md:px-6 py-2 text-[12px] text-[#d9bd8a] border-b-2 border-[#3d2712]">
-          Kiếm <b className="text-[#ffd94a]">vàng</b> bằng cách sinh tồn: +1~26/giây • diệt quái +1 • quái tinh nhuệ +6 • qua đợt +15~215 • hạ trùm +114~510
+          {tab === "quest"
+            ? "Làm nhiệm vụ ngày để lấy kim cương — đổi skin Huyền Thoại."
+            : tab === "upgrade"
+              ? "Dùng vàng nâng chỉ số vĩnh viễn: mạnh dần qua từng trận, không mất khi thua."
+              : "Kiếm vàng bằng cách sinh tồn: +1~26/giây • diệt quái +1 • quái tinh nhuệ +6 • qua đợt +15~215 • hạ trùm +114~510"}
         </div>
 
-        {/* lưới skin */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {items.map((s, i) => {
-              const isOwned = owned.includes(s.id);
-              const isEquipped = equipped === s.id;
-              const canBuy = gold >= s.price;
-              return (
-                <div
-                  key={s.id}
-                  className="card-in panel-deep p-3 flex flex-col items-center relative"
-                  style={{
-                    animationDelay: `${Math.min(i * 0.02, 0.5)}s`,
-                    borderColor: isEquipped ? "#ffd94a" : undefined,
-                    boxShadow: isEquipped
-                      ? "inset 0 0 0 2px #1c0f06, 0 0 16px rgba(255,217,74,.35), 0 4px 0 rgba(0,0,0,.4)"
-                      : undefined,
-                  }}
-                >
-                  <span
-                    className="absolute top-1.5 left-1.5 font-display text-[9px] px-1.5 py-0.5 rounded"
-                    style={{ background: TIER_COLORS[s.tier] + "30", color: TIER_COLORS[s.tier] }}
+          {tab === "upgrade" && <UpgradePanel save={save} onUpgrade={onUpgrade} />}
+          {tab === "quest" && <QuestPanel save={save} day={day} onClaim={onClaim} />}
+          {skinTab && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {items.map((s, i) => {
+                const isOwned = owned.includes(s.id);
+                const isEquipped = equipped === s.id;
+                const byGem = s.gemPrice > 0;
+                const canBuy = byGem ? save.gems >= s.gemPrice : save.gold >= s.price;
+                return (
+                  <div
+                    key={s.id}
+                    className="card-in panel-deep p-3 flex flex-col items-center relative"
+                    style={{
+                      animationDelay: `${Math.min(i * 0.02, 0.5)}s`,
+                      borderColor: isEquipped ? "#ffd94a" : undefined,
+                      boxShadow: isEquipped
+                        ? "inset 0 0 0 2px #1c0f06, 0 0 16px rgba(255,217,74,.35), 0 4px 0 rgba(0,0,0,.4)"
+                        : undefined,
+                    }}
                   >
-                    {TIER_NAMES[s.tier]}
-                  </span>
-                  {isEquipped && (
-                    <span className="absolute top-1.5 right-1.5">
-                      <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
+                    <span
+                      className="absolute top-1.5 left-1.5 font-display text-[9px] px-1.5 py-0.5 rounded"
+                      style={{ background: TIER_COLORS[s.tier] + "30", color: TIER_COLORS[s.tier] }}
+                    >
+                      {TIER_NAMES[s.tier]}
                     </span>
-                  )}
-                  <div className="h-[84px] flex items-center justify-center">
-                    {tab === "hero" ? <HeroPreview skin={s as HeroSkinDef} /> : <WeaponPreview skin={s as WeaponSkinDef} />}
-                  </div>
-                  <div className="mt-1 text-[12.5px] font-bold text-[#ffe9b8] text-center leading-tight">{s.name}</div>
-                  <div className="mt-2 w-full">
-                    {isEquipped ? (
-                      <div className="w-full text-center font-display text-[11px] py-1.5 rounded bg-[#7ce06a]/20 text-[#7ce06a] border border-[#7ce06a]/50">
-                        ĐANG DÙNG
-                      </div>
-                    ) : isOwned ? (
-                      <button onClick={() => onEquip(tab, s.id)} className="btn-ghost w-full !py-1.5 !text-[12px]">
-                        TRANG BỊ
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onBuy(tab, s.id, s.price)}
-                        disabled={!canBuy}
-                        className="btn w-full !py-1.5 !text-[12px] flex items-center justify-center gap-1.5"
-                      >
-                        <Icon name="coin" className="w-3.5 h-3.5" />
-                        {s.price === 0 ? "MIỄN PHÍ" : s.price.toLocaleString("vi")}
-                      </button>
+                    {isEquipped && (
+                      <span className="absolute top-1.5 right-1.5">
+                        <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
+                      </span>
                     )}
+                    <div className="h-[84px] flex items-center justify-center">
+                      {tab === "hero"
+                        ? <HeroPreview skin={s as HeroSkinDef} />
+                        : <WeaponPreview skin={s as WeaponSkinDef} />}
+                    </div>
+                    <div className="mt-1 text-[12.5px] font-bold text-[#ffe9b8] text-center leading-tight">{s.name}</div>
+                    {tab === "hero"
+                      ? <StatChips stats={(s as HeroSkinDef).stats} />
+                      : (
+                        <div className="mt-1 text-[10.5px] text-[#c9a0e8] text-center leading-tight">
+                          {(s as WeaponSkinDef).mood}
+                        </div>
+                      )}
+                    <div className="mt-2 w-full">
+                      {isEquipped ? (
+                        <div className="w-full text-center font-display text-[11px] py-1.5 rounded bg-[#7ce06a]/20 text-[#7ce06a] border border-[#7ce06a]/50">
+                          ĐANG DÙNG
+                        </div>
+                      ) : isOwned ? (
+                        <button onClick={() => onEquip(tab, s.id)} className="btn-ghost w-full !py-1.5 !text-[12px]">
+                          TRANG BỊ
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onBuy(tab, s.id)}
+                          disabled={!canBuy}
+                          className="btn w-full !py-1.5 !text-[12px] flex items-center justify-center gap-1.5"
+                        >
+                          <Icon name={byGem ? "gem" : "coin"} className="w-3.5 h-3.5" />
+                          {byGem
+                            ? s.gemPrice.toLocaleString("vi")
+                            : s.price === 0
+                              ? "MIỄN PHÍ"
+                              : s.price.toLocaleString("vi")}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

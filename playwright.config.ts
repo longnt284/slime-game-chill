@@ -3,6 +3,9 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  // Các bài đo FPS cần máy rảnh: chạy song song nhiều file sẽ tranh CPU và
+  // khiến chúng trượt mốc 60 FPS dù game không hề chậm đi.
+  workers: 1,
   retries: 0,
   reporter: "list",
   use: {

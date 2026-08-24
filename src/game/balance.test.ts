@@ -18,6 +18,7 @@ import {
   waveQuota,
 } from "./balance";
 import type { CombatSkillId } from "./balance";
+import { HERO_SKINS, UPGRADES, addStats, upgradeStats } from "./shop";
 
 describe("stage balance", () => {
   it("keeps late-game incoming damage survivable", () => {
@@ -135,6 +136,36 @@ describe("weapon tiers", () => {
     }
     expect(shardNeed(MAX_SKILL_TIER)).toBe(0);
     expect(shardNeed(99)).toBe(0);
+  });
+});
+
+describe("permanent buffs against the campaign", () => {
+  const maxedBoard = Object.fromEntries(UPGRADES.map((def) => [def.id, def.max]));
+  const legendary = HERO_SKINS.find((skin) => skin.tier === 3)!;
+  const fullMeta = addStats(legendary.stats, upgradeStats(maxedBoard));
+
+  const secondsToKillFinalBoss = (meta: { power: number; haste: number }) => {
+    const power = 2.6 * (1 + meta.power);
+    const cooldownMultiplier = Math.pow(0.92, 5) * (1 - meta.haste);
+    return bossStats(100, true).hp / projectedMaxBuildDps(power, cooldownMultiplier);
+  };
+
+  it("keeps a fully geared player inside the same boss fight window as a bare one", () => {
+    const bare = secondsToKillFinalBoss({ power: 0, haste: 0 });
+    const geared = secondsToKillFinalBoss(fullMeta);
+
+    expect(geared).toBeLessThan(bare);
+    expect(geared).toBeGreaterThan(25);
+    expect(geared).toBeLessThan(45);
+  });
+
+  it("caps the whole meta ladder at a deliberately gentle boost", () => {
+    // Skin Huyền Thoại cộng bảng nâng cấp kịch cấp vẫn phải là con số khiêm tốn,
+    // nếu không người chơi lâu năm sẽ đi xuyên chiến dịch mà không cần build.
+    expect(fullMeta.power).toBeLessThanOrEqual(0.25);
+    expect(fullMeta.haste).toBeLessThanOrEqual(0.15);
+    expect(fullMeta.maxHp).toBeLessThanOrEqual(80);
+    expect(fullMeta.speed).toBeLessThanOrEqual(0.15);
   });
 });
 

@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Engine } from "./game/engine";
 import type { HudData, OverData, Phase } from "./game/engine";
-import { heroSkinById, weaponSkinById, loadSave, saveSave } from "./game/shop";
-import type { SaveData } from "./game/shop";
+import {
+  heroSkinById,
+  loadSave,
+  metaStatsOf,
+  saveSave,
+  upgradeCost,
+  upgradeDef,
+  weaponSkinById,
+} from "./game/shop";
+import type { SaveData, UpgradeId } from "./game/shop";
+import { applyTally, claimQuest, dayKey, questsForDay } from "./game/quests";
 import { sfx } from "./game/audio";
 import {
   Banner,
@@ -25,7 +34,15 @@ export default function App() {
   const [hud, setHud] = useState<HudData | null>(null);
   const [over, setOver] = useState<OverData>({});
   const [shopOpen, setShopOpen] = useState(false);
-  const [save, setSave] = useState<SaveData>(() => loadSave());
+  const [day, setDay] = useState(() => dayKey());
+  const [save, setSave] = useState<SaveData>(() => {
+    // Sang ngày mới thì dọn tiến độ nhiệm vụ ngay từ lúc mở game.
+    const loaded = loadSave();
+    return { ...loaded, quests: questsForDay(loaded.quests, dayKey()) };
+  });
+  // Mỗi lần chốt sổ có mã riêng; giữ lại mã đã xử lý để không cộng thưởng hai lần
+  // khi React chạy lại effect với cùng một kết quả.
+  const settledRef = useRef(-1);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -38,7 +55,7 @@ export default function App() {
       },
       onHud: setHud,
     });
-    eng.applyLoadout(heroSkinById(s.hero), weaponSkinById(s.weapon));
+    eng.applyLoadout(heroSkinById(s.hero), weaponSkinById(s.weapon), metaStatsOf(s));
     engRef.current = eng;
     return () => {
       eng.destroy();
@@ -46,22 +63,38 @@ export default function App() {
     };
   }, []);
 
-  // cộng vàng vào ví mỗi khi qua màn / thua / thắng
+  // Người chơi để game mở qua nửa đêm thì bộ nhiệm vụ vẫn phải đổi sang ngày mới.
   useEffect(() => {
-    const earned = over.stats?.goldEarned ?? 0;
-    if ((phase === "stageclear" || phase === "gameover" || phase === "victory") && earned > 0) {
-      setSave((s) => {
-        const ns = { ...s, gold: s.gold + earned };
-        saveSave(ns);
-        return ns;
-      });
-    }
-  }, [phase, over]);
+    const timer = window.setInterval(() => setDay(dayKey()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setSave((s) => (s.quests.day === day ? s : { ...s, quests: questsForDay(s.quests, day) }));
+  }, [day]);
+
+  // Chốt sổ sau mỗi màn đã qua và khi kết thúc trận: cộng vàng và tiến độ nhiệm vụ.
+  useEffect(() => {
+    const stats = over.stats;
+    if (!stats) return;
+    if (phase !== "stageclear" && phase !== "gameover" && phase !== "victory") return;
+    if (settledRef.current === stats.id) return;
+    settledRef.current = stats.id;
+    setSave((s) => {
+      const next: SaveData = {
+        ...s,
+        gold: s.gold + Math.max(0, stats.goldEarned),
+        quests: applyTally(s.quests, day, stats.tally),
+      };
+      saveSave(next);
+      return next;
+    });
+  }, [phase, over, day]);
 
   const applySave = (s: SaveData) => {
     setSave(s);
     saveSave(s);
-    engRef.current?.applyLoadout(heroSkinById(s.hero), weaponSkinById(s.weapon));
+    engRef.current?.applyLoadout(heroSkinById(s.hero), weaponSkinById(s.weapon), metaStatsOf(s));
   };
 
   const handleMove = useCallback((x: number, y: number) => {
@@ -74,9 +107,13 @@ export default function App() {
     engRef.current?.toggleMute();
   }, []);
 
-  const handleBuy = (kind: "hero" | "weapon", id: string, price: number) => {
-    if (save.gold < price) return;
-    const s: SaveData = { ...save, gold: save.gold - price };
+  const handleBuy = (kind: "hero" | "weapon", id: string) => {
+    const skin = kind === "hero" ? heroSkinById(id) : weaponSkinById(id);
+    const byGem = skin.gemPrice > 0;
+    if (byGem ? save.gems < skin.gemPrice : save.gold < skin.price) return;
+    const s: SaveData = byGem
+      ? { ...save, gems: save.gems - skin.gemPrice }
+      : { ...save, gold: save.gold - skin.price };
     if (kind === "hero") {
       s.heroOwned = [...save.heroOwned, id];
       s.hero = id;
@@ -91,6 +128,28 @@ export default function App() {
   const handleEquip = (kind: "hero" | "weapon", id: string) => {
     applySave(kind === "hero" ? { ...save, hero: id } : { ...save, weapon: id });
     sfx.click();
+  };
+
+  const handleUpgrade = (id: UpgradeId, cost: number) => {
+    const def = upgradeDef(id);
+    if (!def) return;
+    const level = Math.min(def.max, save.upgrades[id] ?? 0);
+    // Tính lại giá tại chỗ thay vì tin con số từ giao diện.
+    const price = upgradeCost(def, level);
+    if (price === 0 || price !== cost || save.gold < price) return;
+    applySave({
+      ...save,
+      gold: save.gold - price,
+      upgrades: { ...save.upgrades, [id]: level + 1 },
+    });
+    sfx.evolve();
+  };
+
+  const handleClaim = (id: string) => {
+    const result = claimQuest(save, id, day);
+    if (result.gems === 0) return;
+    applySave(result.save);
+    sfx.core();
   };
 
   const inGame = phase === "playing" || phase === "paused" || phase === "levelup" || phase === "stageclear";
@@ -120,15 +179,22 @@ export default function App() {
       )}
 
       {phase === "menu" && !shopOpen && (
-        <MenuScreen onStart={() => engRef.current?.start()} onShop={() => setShopOpen(true)} gold={save.gold} />
+        <MenuScreen
+          onStart={() => engRef.current?.start()}
+          onShop={() => setShopOpen(true)}
+          save={save}
+          day={day}
+        />
       )}
 
       {shopOpen && (
         <ShopScreen
-          gold={save.gold}
           save={save}
+          day={day}
           onBuy={handleBuy}
           onEquip={handleEquip}
+          onUpgrade={handleUpgrade}
+          onClaim={handleClaim}
           onClose={() => setShopOpen(false)}
         />
       )}

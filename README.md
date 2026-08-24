@@ -8,7 +8,9 @@ Game survivor-like chơi trực tiếp trên trình duyệt: nhân vật tự t�
 - **Mảnh vũ khí** rơi ra từ quái, elite và trùm; gom đủ là tự động lên một bậc mới.
 - 6 bị động, hệ tiến hóa và mastery cho giai đoạn cuối game.
 - Độ khó tăng theo đường cong riêng cho máu, sát thương, tốc độ, số lượng quái và trùm.
-- 16 bản đồ, 100 trùm, 40 skin nhân vật và 20 skin vũ khí.
+- 16 bản đồ, 100 trùm, 40 skin nhân vật và **30 skin vũ khí đổi màu theo thời gian**.
+- Skin nhân vật càng hiếm càng đắt và **cộng thêm chỉ số**; nâng cấp chỉ số vĩnh viễn bằng vàng.
+- **Nhiệm vụ ngày** đổi mới mỗi ngày, thưởng kim cương để đổi skin Huyền Thoại.
 - Điều khiển bàn phím trên desktop và joystick cảm ứng trên mobile.
 - Boss có cảnh báo trực quan trước các đòn charge, bắn vòng và dậm đất.
 - Save cũ được chuẩn hóa an toàn khi tải; mỗi trùm thưởng chính xác 1 lõi tiến hóa.
@@ -32,6 +34,34 @@ Mỗi bậc đều cộng sát thương, rút ngắn hồi chiêu và mở rộn
 
 Vũ khí đạt bậc 5 trở lên cộng thêm một lõi tiến hóa sẽ hóa thành tuyệt kỹ: mạnh hơn gấp bội,
 mở trọn vòng quét và xuyên thấu mọi mục tiêu.
+
+## Kinh tế ngoài trận
+
+Hai loại tiền có hai vai trò tách bạch, nên không thứ nào lấn sân thứ nào:
+
+| | Kiếm ở đâu | Dùng để làm gì |
+| --- | --- | --- |
+| **Vàng** | Sinh tồn, diệt quái, qua đợt, hạ trùm | Skin Thường/Hiếm/Quý và bảng nâng cấp chỉ số |
+| **Kim cương** | Chỉ từ nhiệm vụ ngày | Chỉ đổi skin Huyền Thoại |
+
+**Nhiệm vụ ngày** rút ba nhiệm vụ mỗi ngày từ chín loại (diệt quái, hạ tinh anh, hạ trùm, vượt màn,
+nhặt mảnh, kiếm vàng, sống sót, tiến sâu, tôi luyện vũ khí). Cùng một ngày thì ai cũng nhận cùng bộ,
+qua nửa đêm là đổi bộ mới và tiến độ làm lại từ đầu. Gom trọn ba nhiệm vụ được khoảng 9–21 kim cương,
+trong khi một skin Huyền Thoại giá 55–70 — tức là vài ngày cho một món.
+
+**Nâng cấp chỉ số** mua bằng vàng và giữ vĩnh viễn qua mọi trận, kể cả khi thua. Sáu nhánh, mỗi nhánh
+5 cấp với giá tăng dần theo cấp. Buff cố ý để nhẹ tay: kịch cấp cả sáu nhánh cũng chỉ +10% sát thương,
++40 máu, +7,5% tốc chạy và -7,5% hồi chiêu.
+
+**Skin nhân vật** cộng chỉ số theo bậc hiếm — Thường không cộng gì, còn Huyền Thoại cho +10% sát thương,
++20 máu, +4% tốc chạy. Gộp cả skin Huyền Thoại lẫn bảng nâng cấp kịch cấp thì trận trùm cuối rút từ
+37 giây xuống 28 giây: thấy rõ mình mạnh lên, nhưng vẫn phải xây build tử tế mới qua được màn 100.
+
+**Skin vũ khí** giờ không còn đứng yên một màu. Mỗi skin có bảng màu gốc cùng 1–2 tông chuyển tiếp;
+hiệu ứng trong trận giữ một tông vài giây rồi hòa mượt sang tông kế tiếp, hết vòng lại quay về màu gốc.
+Mười vũ khí mới đi theo hướng tương phản mạnh — Băng Hỏa Song Sinh đảo giữa băng lam và lửa cam,
+Hắc Động Thôn Phệ nuốt từ đen hư không sang trắng chói, Thiên Hà Lưu Ly trôi qua chàm, hồng tinh vân
+rồi lam.
 
 ## Chạy dự án
 

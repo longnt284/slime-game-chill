@@ -1,8 +1,11 @@
 import { sfx } from "./audio";
 import { getHeroSprite, getMobSprite, getItemSprite, getShardSprite } from "./sprites";
 import type { MobColors, MobKind } from "./sprites";
-import { HERO_SKINS, WEAPON_SKINS } from "./shop";
-import type { HeroSkinDef, WeaponSkinDef } from "./shop";
+import { EMPTY_STATS, HERO_SKINS, WEAPON_SKINS } from "./shop";
+import type { HeroSkinDef, MetaStats, WeaponSkinDef } from "./shop";
+import { weaponPaletteAt } from "./palette";
+import type { WeaponPalette } from "./palette";
+import type { RunTally } from "./quests";
 import {
   MAX_SKILL_TIER,
   bossAttackTiming,
@@ -86,6 +89,10 @@ export interface GameStats {
   level: number;
   goldEarned: number;
   bossName?: string;
+  /** Mã riêng của mỗi lần chốt sổ, để lớp UI không cộng trùng một chặng hai lần. */
+  id: number;
+  /** Thành tích của chặng vừa rồi, dùng để tính tiến độ nhiệm vụ ngày. */
+  tally: RunTally;
 }
 export interface OverData {
   choices?: Choice[];
@@ -309,6 +316,12 @@ export class Engine {
   private joy = { x: 0, y: 0, active: false };
   private heroSkin: HeroSkinDef = HERO_SKINS[0];
   private weaponSkin: WeaponSkinDef = WEAPON_SKINS[0];
+  /** Chỉ số vĩnh viễn từ skin nhân vật và bảng nâng cấp đã mua. */
+  private meta: MetaStats = EMPTY_STATS;
+  /** Bảng màu vũ khí của khung hình hiện tại, trôi dần giữa các tông màu của skin. */
+  private wc: WeaponPalette = WEAPON_SKINS[0].moods[0];
+  /** Đồng hồ riêng cho vòng đổi màu, chạy cả khi tạm dừng để menu vẫn sống động. */
+  private paletteT = 0;
   private orbitPts: { x: number; y: number; ev: boolean; fx: number }[] = [];
 
   // progression
@@ -317,9 +330,16 @@ export class Engine {
   private xp = 0;
   private pendingLv = 0;
   private kills = 0;
+  private eliteKills = 0;
+  private bossKills = 0;
+  private stagesCleared = 0;
+  private shardsTaken = 0;
   private cores = 0;
   private totalTime = 0;
   private stageTime = 0;
+  /** Mốc thành tích đã chốt sổ ở lần qua màn hoặc kết thúc trận gần nhất. */
+  private banked = { kills: 0, elites: 0, bosses: 0, stages: 0, shards: 0, seconds: 0 };
+  private statsId = 0;
 
   // skills
   private skills: Record<SkillId, { lv: number; evolved: boolean }> = {
@@ -448,6 +468,11 @@ export class Engine {
     this.xp = 0;
     this.pendingLv = 0;
     this.kills = 0;
+    this.eliteKills = 0;
+    this.bossKills = 0;
+    this.stagesCleared = 0;
+    this.shardsTaken = 0;
+    this.banked = { kills: 0, elites: 0, bosses: 0, stages: 0, shards: 0, seconds: 0 };
     this.cores = 0;
     this.goldRun = 0;
     this.goldBanked = 0;
@@ -469,8 +494,8 @@ export class Engine {
     this.shake = 0;
     this.hitStop = 0;
     this.moving = false;
-    this.maxHp = 100;
-    this.hp = 100;
+    this.maxHp = 100 + Math.round(this.meta.maxHp);
+    this.hp = this.maxHp;
     this.px = WORLD / 2;
     this.py = WORLD / 2;
     this.enemies = [];
@@ -509,9 +534,15 @@ export class Engine {
     sfx.toggleMute();
     this.pushHud();
   }
-  applyLoadout(hero: HeroSkinDef, weapon: WeaponSkinDef) {
+  /**
+   * Trang bị skin và chỉ số vĩnh viễn. Chỉ số áp dụng ngay cho trận sau; máu
+   * cộng thêm chỉ đổi trần máu ở lần bắt đầu trận kế tiếp để tránh hồi máu lậu
+   * bằng cách đổi skin giữa trận.
+   */
+  applyLoadout(hero: HeroSkinDef, weapon: WeaponSkinDef, stats: MetaStats = EMPTY_STATS) {
     this.heroSkin = hero;
     this.weaponSkin = weapon;
+    this.meta = stats;
   }
   setJoystick(x: number, y: number) {
     if (x === 0 && y === 0) {
@@ -524,8 +555,18 @@ export class Engine {
     this.joy.x = clamp(x, -1, 1);
     this.joy.y = clamp(y, -1, 1);
   }
+  /** Chốt sổ mọi thành tích của chặng vừa rồi để chặng sau tính lại từ 0. */
   bankGold() {
+    this.statsId++;
     this.goldBanked = this.goldRun;
+    this.banked = {
+      kills: this.kills,
+      elites: this.eliteKills,
+      bosses: this.bossKills,
+      stages: this.stagesCleared,
+      shards: this.shardsTaken,
+      seconds: this.totalTime,
+    };
   }
   nextStage() {
     this.stage++;
@@ -593,7 +634,7 @@ export class Engine {
       this.hp = clamp(this.hp + 8, 1, this.maxHp);
       sfx.heal();
     } else if (c.kind === "heal" && c.id === "fortune") {
-      this.goldRun += 120 + this.stage * 3;
+      this.earnGold(120 + this.stage * 3);
       sfx.core();
     } else if (c.kind === "heal") {
       this.hp = clamp(this.hp + this.maxHp * 0.5, 1, this.maxHp);
@@ -616,12 +657,27 @@ export class Engine {
   }
 
   private stats(): GameStats {
+    const banked = this.banked;
     return {
       stage: this.stage,
       kills: this.kills,
       time: fmtTime(this.totalTime),
       level: this.level,
       goldEarned: this.goldRun - this.goldBanked,
+      id: this.statsId,
+      // Chỉ tính phần phát sinh kể từ lần chốt sổ trước, nếu không mỗi lần qua
+      // màn sẽ cộng lại toàn bộ thành tích của cả trận vào nhiệm vụ ngày.
+      tally: {
+        kills: this.kills - banked.kills,
+        elites: this.eliteKills - banked.elites,
+        bosses: this.bossKills - banked.bosses,
+        stages: this.stagesCleared - banked.stages,
+        shards: this.shardsTaken - banked.shards,
+        gold: this.goldRun - this.goldBanked,
+        seconds: Math.floor(this.totalTime - banked.seconds),
+        bestStage: this.stage,
+        bestTier: Math.max(...(Object.keys(this.skills) as SkillId[]).map((id) => this.skills[id].lv)),
+      },
     };
   }
 
@@ -674,17 +730,25 @@ export class Engine {
   }
 
   /* ============ derived stats ============ */
+  // Chỉ số vĩnh viễn nhân lên trên chỉ số kiếm được trong trận, nên nó nâng đều
+  // cả build yếu lẫn build mạnh thay vì chỉ có ích ở một giai đoạn.
   private power() {
-    return 1 + 0.14 * this.passives.power + 0.03 * this.masteries.force;
+    return (1 + 0.14 * this.passives.power + 0.03 * this.masteries.force) * (1 + this.meta.power);
   }
   private cdr() {
-    return Math.pow(0.92, this.passives.haste);
+    return Math.pow(0.92, this.passives.haste) * (1 - this.meta.haste);
   }
   private magnetR() {
-    return 95 * (1 + 0.4 * this.passives.magnet + 0.06 * this.masteries.vacuum);
+    return 95 * (1 + 0.4 * this.passives.magnet + 0.06 * this.masteries.vacuum) * (1 + this.meta.magnet);
   }
   private moveSpeed() {
-    return 252 * (1 + 0.09 * this.passives.speed + 0.01 * this.masteries.swiftness);
+    return 252 * (1 + 0.09 * this.passives.speed + 0.01 * this.masteries.swiftness) * (1 + this.meta.speed);
+  }
+  /** Vàng luôn cộng theo bội số của chỉ số Vận Vàng, làm tròn lên để không bao giờ mất phần thưởng. */
+  private earnGold(amount: number) {
+    const total = Math.ceil(amount * (1 + this.meta.gold));
+    this.goldRun += total;
+    return total;
   }
 
   /* ============ stage build ============ */
@@ -843,7 +907,9 @@ export class Engine {
     if (e.dead) return;
     e.dead = true;
     this.kills++;
-    if (!e.boss) this.goldRun += e.elite ? 6 : 1;
+    if (e.elite) this.eliteKills++;
+    if (e.boss) this.bossKills++;
+    if (!e.boss) this.earnGold(e.elite ? 6 : 1);
     this.burst(e.x, e.y, e.boss ? 46 : 10, e.colors.M, e.boss ? 260 : 150);
     this.burst(e.x, e.y, e.boss ? 20 : 0, e.colors.X, 200);
     sfx.kill();
@@ -863,8 +929,7 @@ export class Engine {
       if (this.waveKills >= waveQuota(this.stage, this.wave)) {
         this.wave++;
         this.waveKills = 0;
-        const g = 15 + this.stage * 2;
-        this.goldRun += g;
+        const g = this.earnGold(15 + this.stage * 2);
         this.dmgNum(this.px, this.py - 34, `+${g} vàng`, "#ffd94a", 15);
         if (this.wave >= 4) {
           this.banner("CẢNH BÁO!", "Trùm đang tới...");
@@ -901,7 +966,7 @@ export class Engine {
 
   /** Màu của mảnh vũ khí lấy theo bảng màu skin vũ khí đang trang bị. */
   private shardColors(id: SkillId): [string, string] {
-    const w = this.weaponSkin;
+    const w = this.wc;
     switch (id) {
       case "bolt": return [w.bolt, w.core];
       case "orbit": return [w.blade, w.blade2];
@@ -924,6 +989,7 @@ export class Engine {
   }
 
   private collectShard(id: SkillId) {
+    this.shardsTaken++;
     const result = grantShard(this.progressionState(), id);
     this.applyProgression(result.state);
     if (result.tierUp !== null) this.tierUpFx(id, result.tierUp);
@@ -935,9 +1001,9 @@ export class Engine {
     this.shake = 16;
     sfx.bossDie();
     const reward = bossReward(this.stage);
-    this.goldRun += reward.gold;
+    const goldGained = this.earnGold(reward.gold);
     this.cores += reward.cores;
-    this.dmgNum(e.x, e.y - e.r - 10, `+${reward.gold} vàng`, "#ffd94a", 19);
+    this.dmgNum(e.x, e.y - e.r - 10, `+${goldGained} vàng`, "#ffd94a", 19);
     for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 8));
     this.dropShards(e.x, e.y, 6 + Math.floor(this.stage / 20), 1);
     if (Math.random() < 0.5) this.dropPickup(e.x, e.y + 20, "heart", 30);
@@ -1128,8 +1194,8 @@ export class Engine {
       const dmg = tuning.damage * P;
       const hits = this.targetsInArc(this.px, this.py, tuning.radius, tuning.arc, this.aimA, tuning.maxTargets);
       for (const e of hits) this.damageEnemy(e, dmg);
-      const color = ev ? this.weaponSkin.glow : this.weaponSkin.aura;
-      this.sweep(this.aimA, tuning.arc, tuning.radius, 0.34, color, this.weaponSkin.glow, tuning.fx);
+      const color = ev ? this.wc.glow : this.wc.aura;
+      this.sweep(this.aimA, tuning.arc, tuning.radius, 0.34, color, this.wc.glow, tuning.fx);
       this.ring(this.px, this.py, 20, tuning.radius, 0.35, color, 3 + tuning.fx, tuning.fx >= 1.6 ? 2 : 1);
       if (hits.length) sfx.hit();
       this.cds.aura = tuning.cooldown * C;
@@ -1219,6 +1285,7 @@ export class Engine {
 
   /* ============ update ============ */
   private update(rawDt: number) {
+    this.paletteT += rawDt;
     let dt = rawDt;
     if (this.hitStop > 0) {
       this.hitStop -= rawDt;
@@ -1299,7 +1366,7 @@ export class Engine {
     this.goldT += dt;
     if (this.goldT >= 1) {
       this.goldT -= 1;
-      this.goldRun += 1 + Math.floor(this.stage / 4);
+      this.earnGold(1 + Math.floor(this.stage / 4));
     }
 
     /* --- waves & spawn --- */
@@ -1376,7 +1443,7 @@ export class Engine {
           life: maxLife,
           maxLife,
           size: (s.kind === "bolt" ? 5 : 7) * s.fx,
-          color: s.evolved ? this.weaponSkin.glow : s.kind === "bolt" ? this.weaponSkin.bolt : this.weaponSkin.blade,
+          color: s.evolved ? this.wc.glow : s.kind === "bolt" ? this.wc.bolt : this.wc.blade,
         });
       }
       if (s.x < 20 || s.x > WORLD - 20 || s.y < 20 || s.y > WORLD - 20) s.life = 0;
@@ -1428,7 +1495,7 @@ export class Engine {
         const p = this.orbitPts[Math.floor(Math.random() * this.orbitPts.length)];
         this.trails.push({
           x: p.x, y: p.y, life: 0.2, maxLife: 0.2,
-          size: 4 * tuning.fx, color: ev ? this.weaponSkin.glow : this.weaponSkin.blade,
+          size: 4 * tuning.fx, color: ev ? this.wc.glow : this.wc.blade,
         });
       }
     } else {
@@ -1549,6 +1616,7 @@ export class Engine {
       this.stageClearT -= dt;
       if (this.stageClearT <= 0) {
         this.stageClearT = -1;
+        this.stagesCleared++;
         const best = parseInt(localStorage.getItem("tvqv_best") || "0", 10);
         if (this.stage > best) localStorage.setItem("tvqv_best", String(this.stage));
         const st = this.stats();
@@ -1798,6 +1866,8 @@ export class Engine {
     const ctx = this.ctx;
     const vw = this.vw;
     const vh = this.vh;
+    // Bảng màu vũ khí trôi theo thời gian thật nên hiệu ứng luôn đang đổi tông.
+    this.wc = weaponPaletteAt(this.weaponSkin.moods, this.paletteT);
     ctx.fillStyle = this.biome.ground[1];
     ctx.fillRect(0, 0, vw, vh);
 
@@ -2237,7 +2307,7 @@ export class Engine {
   }
 
   private drawShots(ctx: CanvasRenderingContext2D) {
-    const wc = this.weaponSkin;
+    const wc = this.wc;
     for (const s of this.shots) {
       const x = Math.round(s.x);
       const y = Math.round(s.y);
@@ -2298,7 +2368,7 @@ export class Engine {
   }
 
   private drawOrbit(ctx: CanvasRenderingContext2D) {
-    const wc = this.weaponSkin;
+    const wc = this.wc;
     const t = performance.now() / 90;
     for (const p of this.orbitPts) {
       if (p.ev || p.fx >= 1.5) {

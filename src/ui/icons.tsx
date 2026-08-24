@@ -45,6 +45,7 @@ export function Icon({ name, className = "w-5 h-5" }: IconProps) {
     wasd: <path d="M8 2h8v8H8zm0 2v4h4V4zM2 12h8v8H2zm0 2v4h4v-4zm12 0h8v8h-8zm0 2v4h4v-4z" />,
     shield: <path d="M12 1L3 4v8c0 5.4 3.8 9.6 9 11 5.2-1.4 9-5.6 9-11V4zm0 2.2l7 2.3V12c0 4.2-2.8 7.6-7 8.9-4.2-1.3-7-4.7-7-8.9V5.5z" />,
     shard: <path d="M14 1l7 6-3 3 2 5-6 8-3-7-6-2 4-4-2-6z" />,
+    gem: <path d="M7 2h10l5 7-10 13L2 9zm1.2 2L5 8.4h4.2L10.6 4zm5.2 0l1.4 4.4H19L15.8 4zM11 4l-1.4 4.4h4.8L13 4zm-5.4 6.4l4.8 6.6-2-6.6zm5.2 0l1.4 6.8 1.4-6.8zm5.4 0l-2 6.6 4.8-6.6z" />,
   };
   return (
     <svg

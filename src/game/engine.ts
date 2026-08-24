@@ -9,6 +9,7 @@ import {
   createInitialProgression,
   rollChoices as buildChoices,
 } from "./progression";
+import { capFx, telegraphAlpha } from "./visuals";
 import {
   BIOMES,
   WORLD,
@@ -195,6 +196,25 @@ interface Ring {
   color: string;
   width: number;
 }
+interface Trail {
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+}
+interface Telegraph {
+  x: number;
+  y: number;
+  tx?: number;
+  ty?: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  kind: "charge" | "burst" | "slam";
+}
 interface Frost {
   x: number;
   y: number;
@@ -293,6 +313,8 @@ export class Engine {
   private dmgs: DmgNum[] = [];
   private zaps: Zap[] = [];
   private rings: Ring[] = [];
+  private trails: Trail[] = [];
+  private telegraphs: Telegraph[] = [];
   private frosts: Frost[] = [];
   private decors: Decor[] = [];
   private ambients: Ambient[] = [];
@@ -705,7 +727,8 @@ export class Engine {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const v = rand(sp * 0.3, sp);
-      this.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, life: rand(0.3, 0.7), maxLife: 0.7, size: rand(2, 5), color, grav: 260 });
+      const life = rand(0.3, 0.7);
+      this.particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40, life, maxLife: life, size: rand(2, 5), color, grav: 260 });
     }
   }
   private puff(x: number, y: number, color: string) {
@@ -726,6 +749,8 @@ export class Engine {
     e.flash = 0.1;
     e.x = clamp(e.x + knockX, 30, WORLD - 30);
     e.y = clamp(e.y + knockY, 30, WORLD - 30);
+    this.burst(e.x, e.y - e.r * 0.35, e.boss ? 3 : 2, "#fff3d0", 95);
+    this.burst(e.x, e.y - e.r * 0.35, 1, e.colors.X, 75);
     this.dmgNum(e.x, e.y - e.r, String(d), e.boss ? "#ffd94a" : "#ffffff", e.boss ? 19 : 14);
     if (e.hp <= 0) this.killEnemy(e);
   }
@@ -1131,6 +1156,17 @@ export class Engine {
         s.sx = s.x;
         s.sy = s.y;
       }
+      if (Math.random() < Math.min(1, dt * 48)) {
+        const maxLife = s.kind === "bolt" ? 0.18 : 0.26;
+        this.trails.push({
+          x: s.x,
+          y: s.y,
+          life: maxLife,
+          maxLife,
+          size: s.kind === "bolt" ? (s.evolved ? 9 : 6) : (s.evolved ? 13 : 9),
+          color: s.evolved ? this.weaponSkin.glow : s.kind === "bolt" ? this.weaponSkin.bolt : this.weaponSkin.blade,
+        });
+      }
       if (s.x < 20 || s.x > WORLD - 20 || s.y < 20 || s.y > WORLD - 20) s.life = 0;
       // hits
       for (const e of this.enemies) {
@@ -1241,6 +1277,9 @@ export class Engine {
       b.life -= dt;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
+      if (Math.random() < Math.min(1, dt * 24)) {
+        this.trails.push({ x: b.x, y: b.y, life: 0.16, maxLife: 0.16, size: b.r * 1.2, color: b.color });
+      }
       if (b.x < 20 || b.x > WORLD - 20 || b.y < 20 || b.y > WORLD - 20) b.life = 0;
       if (this.iframes <= 0 && dist2(b.x, b.y, this.px, this.py) < (b.r + 12) * (b.r + 12)) {
         b.life = 0;
@@ -1345,6 +1384,10 @@ export class Engine {
             e.state = "tele";
             e.stateT = 0.5;
             e.flash = 0.4;
+            this.telegraphs.push({
+              x: e.x, y: e.y, tx: this.px, ty: this.py, radius: 74,
+              life: 0.5, maxLife: 0.5, color: info.colors.X, kind: "charge",
+            });
             sfx.wave();
           }
         }
@@ -1354,7 +1397,9 @@ export class Engine {
         // bắn phá
         e.x += Math.cos(a) * e.speed * 0.8 * dt;
         e.y += Math.sin(a) * e.speed * 0.8 * dt;
-        if (e.stateT <= 0) {
+        if (e.state === "tele") {
+          if (e.stateT > 0) break;
+          e.state = "";
           e.stateT = Math.max(1.2, 2.4 - this.stage * 0.008) * cdMul;
           const n = 10 + Math.floor(this.stage / 8);
           for (let i = 0; i < n; i++) {
@@ -1363,6 +1408,15 @@ export class Engine {
           }
           e.spiralA += 0.35;
           sfx.shoot();
+        } else if (e.stateT <= 0) {
+          e.state = "tele";
+          e.stateT = 0.55;
+          e.flash = 0.35;
+          this.telegraphs.push({
+            x: e.x, y: e.y, radius: 118,
+            life: 0.55, maxLife: 0.55, color: info.colors.X, kind: "burst",
+          });
+          sfx.wave();
         }
         break;
       }
@@ -1404,8 +1458,6 @@ export class Engine {
           if (e.stateT <= 0) {
             e.state = "jump";
             e.stateT = 0.4;
-            e.tx = this.px;
-            e.ty = this.py;
           }
         } else if (e.state === "jump") {
           const k = 1 - e.stateT / 0.4;
@@ -1430,7 +1482,13 @@ export class Engine {
           if (e.stateT <= 0) {
             e.state = "tele";
             e.stateT = 0.45;
+            e.tx = this.px;
+            e.ty = this.py;
             e.flash = 0.4;
+            this.telegraphs.push({
+              x: e.tx, y: e.ty, radius: 170,
+              life: 0.45, maxLife: 0.45, color: info.colors.X, kind: "slam",
+            });
             sfx.wave();
           }
         }
@@ -1446,20 +1504,24 @@ export class Engine {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
     }
-    this.particles = this.particles.filter((p) => p.life > 0);
+    this.particles = capFx(this.particles.filter((p) => p.life > 0), 420);
     for (const d of this.dmgs) {
       d.life -= dt;
       d.y += d.vy * dt;
       d.vy *= 0.94;
     }
-    this.dmgs = this.dmgs.filter((d) => d.life > 0);
+    this.dmgs = capFx(this.dmgs.filter((d) => d.life > 0), 90);
     for (const z of this.zaps) z.life -= dt;
-    this.zaps = this.zaps.filter((z) => z.life > 0);
+    this.zaps = capFx(this.zaps.filter((z) => z.life > 0), 36);
     for (const r of this.rings) {
       r.life -= dt;
       r.r += (r.maxR - r.r) * Math.min(1, dt * 12);
     }
-    this.rings = this.rings.filter((r) => r.life > 0);
+    this.rings = capFx(this.rings.filter((r) => r.life > 0), 80);
+    for (const trail of this.trails) trail.life -= dt;
+    this.trails = capFx(this.trails.filter((trail) => trail.life > 0), 180);
+    for (const telegraph of this.telegraphs) telegraph.life -= dt;
+    this.telegraphs = capFx(this.telegraphs.filter((telegraph) => telegraph.life > 0), 24);
     // ambient
     const type = this.biome.ambient.type;
     for (const a of this.ambients) {
@@ -1491,6 +1553,8 @@ export class Engine {
     this.dmgs = [];
     this.zaps = [];
     this.rings = [];
+    this.trails = [];
+    this.telegraphs = [];
     this.frosts = [];
     this.bannerObj = null;
   }
@@ -1525,6 +1589,7 @@ export class Engine {
 
     this.drawGround(ctx, cx, cy, vw, vh);
     this.drawDecors(ctx, cx, cy, vw, vh);
+    this.drawTelegraphs(ctx);
     this.drawPickups(ctx, cx, cy, vw, vh);
 
     // y-sorted entities
@@ -1541,6 +1606,7 @@ export class Engine {
     drawList.sort((a, b) => a.y - b.y);
     for (const d of drawList) d.fn();
 
+    this.drawTrails(ctx);
     this.drawShots(ctx);
     this.drawOrbit(ctx);
     this.drawZaps(ctx);
@@ -1565,7 +1631,7 @@ export class Engine {
       ctx.fillRect(0, 0, vw, vh);
     }
     if (this.phase === "playing" && this.hp / this.maxHp < 0.3) {
-      const p = 0.12 + Math.sin(performance.now() / 240) * 0.06;
+      const p = 0.095 + Math.sin(performance.now() / 240) * 0.035;
       const g = ctx.createRadialGradient(vw / 2, vh / 2, Math.min(vw, vh) * 0.36, vw / 2, vh / 2, Math.max(vw, vh) * 0.72);
       g.addColorStop(0, "rgba(200,20,40,0)");
       g.addColorStop(1, `rgba(200,20,40,${p})`);
@@ -1591,6 +1657,23 @@ export class Engine {
           ctx.fillStyle = g[1];
           ctx.fillRect(tx * T + ((h >>> 3) % 20) + 4, ty * T + ((h >>> 7) % 20) + 4, 3, 3);
         }
+      }
+    }
+    // Mảng màu lớn giúp từng vùng sinh cảnh có chiều sâu nhưng vẫn giữ nét pixel-art.
+    const P = 160;
+    const px0 = Math.max(0, Math.floor(cx / P));
+    const py0 = Math.max(0, Math.floor(cy / P));
+    const px1 = Math.min(Math.ceil(WORLD / P), Math.ceil((cx + vw) / P));
+    const py1 = Math.min(Math.ceil(WORLD / P), Math.ceil((cy + vh) / P));
+    for (let py = py0; py < py1; py++) {
+      for (let px = px0; px < px1; px++) {
+        const h = ((px * 83492791) ^ (py * 297657976)) >>> 0;
+        if (h % 3 === 0) continue;
+        const inset = 18 + (h % 28);
+        ctx.fillStyle = hexToRgba(h % 2 ? g[1] : g[2], 0.075);
+        ctx.fillRect(px * P + inset, py * P + inset, P - inset * 1.35, P - inset * 1.5);
+        ctx.fillStyle = hexToRgba(g[2], 0.11);
+        ctx.fillRect(px * P + inset + 10, py * P + inset + 8, 18 + (h % 34), 3);
       }
     }
     // hàng rào biên
@@ -1725,6 +1808,11 @@ export class Engine {
       } else if (p.kind === "core") {
         const pulse = 1 + Math.sin(p.t * 7) * 0.14;
         const s = 20 * pulse;
+        const beacon = ctx.createLinearGradient(x, y - 52, x, y + 5);
+        beacon.addColorStop(0, "rgba(255,157,46,0)");
+        beacon.addColorStop(1, "rgba(255,157,46,0.28)");
+        ctx.fillStyle = beacon;
+        ctx.fillRect(x - 4, y - 52, 8, 56);
         ctx.drawImage(getItemSprite("core"), x - s / 2, y - s / 2 - 2, s, s);
       } else {
         ctx.drawImage(getItemSprite("heart"), x - 9, y - 8, 18, 16);
@@ -1825,6 +1913,57 @@ export class Engine {
     ctx.drawImage(spr, x - w / 2, y, w, h);
   }
 
+  private drawTrails(ctx: CanvasRenderingContext2D) {
+    for (const trail of this.trails) {
+      const alpha = clamp(trail.life / trail.maxLife, 0, 1);
+      const size = Math.max(2, trail.size * alpha);
+      ctx.fillStyle = hexToRgba(trail.color, alpha * 0.2);
+      ctx.fillRect(trail.x - size, trail.y - size, size * 2, size * 2);
+      ctx.fillStyle = hexToRgba(trail.color, alpha * 0.62);
+      ctx.fillRect(trail.x - size * 0.45, trail.y - size * 0.45, size * 0.9, size * 0.9);
+    }
+  }
+
+  private drawTelegraphs(ctx: CanvasRenderingContext2D) {
+    for (const telegraph of this.telegraphs) {
+      const alpha = telegraphAlpha(telegraph.life, telegraph.maxLife);
+      const progress = 1 - telegraph.life / telegraph.maxLife;
+      const radius = telegraph.radius * (0.72 + progress * 0.28);
+      ctx.save();
+      ctx.strokeStyle = hexToRgba(telegraph.color, alpha);
+      ctx.fillStyle = hexToRgba(telegraph.color, alpha * 0.13);
+      ctx.lineWidth = telegraph.kind === "slam" ? 5 : 4;
+      ctx.setLineDash(telegraph.kind === "burst" ? [10, 8] : [18, 10]);
+      ctx.beginPath();
+      ctx.arc(telegraph.x, telegraph.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (telegraph.kind === "charge" && telegraph.tx !== undefined && telegraph.ty !== undefined) {
+        ctx.setLineDash([16, 12]);
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = hexToRgba(telegraph.color, alpha * 0.22);
+        ctx.beginPath();
+        ctx.moveTo(telegraph.x, telegraph.y);
+        ctx.lineTo(telegraph.tx, telegraph.ty);
+        ctx.stroke();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = hexToRgba("#fff3d0", alpha * 0.82);
+        ctx.stroke();
+      } else if (telegraph.kind === "slam") {
+        ctx.setLineDash([]);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(telegraph.x - radius * 0.45, telegraph.y);
+        ctx.lineTo(telegraph.x + radius * 0.45, telegraph.y);
+        ctx.moveTo(telegraph.x, telegraph.y - radius * 0.45);
+        ctx.lineTo(telegraph.x, telegraph.y + radius * 0.45);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   private drawShots(ctx: CanvasRenderingContext2D) {
     const wc = this.weaponSkin;
     for (const s of this.shots) {
@@ -1900,14 +2039,14 @@ export class Engine {
   private drawZaps(ctx: CanvasRenderingContext2D) {
     for (const z of this.zaps) {
       const a = clamp(z.life / 0.16, 0, 1);
-      ctx.strokeStyle = `rgba(207,239,255,${a})`;
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(92,142,255,${a * 0.42})`;
+      ctx.lineWidth = 12;
       ctx.beginPath();
       ctx.moveTo(z.pts[0].x, z.pts[0].y);
       for (let i = 1; i < z.pts.length; i++) ctx.lineTo(z.pts[i].x, z.pts[i].y);
       ctx.stroke();
-      ctx.strokeStyle = `rgba(120,180,255,${a * 0.7})`;
-      ctx.lineWidth = 9;
+      ctx.strokeStyle = `rgba(207,239,255,${a})`;
+      ctx.lineWidth = 3;
       ctx.stroke();
     }
   }

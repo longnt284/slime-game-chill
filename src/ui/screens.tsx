@@ -28,7 +28,10 @@ export function HUD({
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {/* trái trên: máu + kinh nghiệm */}
-      <div className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "w-[240px] max-w-[56vw]" : "w-[300px] max-w-[62vw]"}`}>
+      <div
+        data-hud="health"
+        className={`absolute top-3 left-3 panel px-3 py-2 ${touch ? "right-3 w-auto" : "w-[300px] max-w-[62vw]"}`}
+      >
         <div className="flex items-center gap-2">
           <Icon name="heart" className="w-5 h-5 text-[#ff4d6d] shrink-0" />
           <div className="bar-outer flex-1 h-[18px]">
@@ -50,7 +53,13 @@ export function HUD({
       </div>
 
       {/* giữa trên: màn + đợt + trùm */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-full px-2">
+      <div
+        className={`absolute flex flex-col items-center gap-1.5 ${
+          touch
+            ? "top-[126px] inset-x-3"
+            : "top-3 left-1/2 -translate-x-1/2 w-full px-2"
+        }`}
+      >
         <div className="panel px-4 py-1.5 flex items-center gap-3 whitespace-nowrap">
           <span className="font-display text-[13px] text-[#ffd94a]">
             MÀN {hud.stage}/{TOTAL_STAGES}
@@ -66,7 +75,7 @@ export function HUD({
         </div>
 
         {!hud.bossActive ? (
-          <div className="panel-deep px-3 py-1.5 flex items-center gap-2.5">
+          <div data-hud="progress" className="panel-deep px-3 py-1.5 flex items-center gap-2.5">
             <span className="text-[11px] font-display text-[#d9bd8a]">ĐỢT</span>
             {[1, 2, 3].map((w) => (
               <span
@@ -95,7 +104,7 @@ export function HUD({
             </span>
           </div>
         ) : (
-          <div className={`panel px-3 py-1.5 ${touch ? "w-[300px]" : "w-[460px]"} max-w-[86vw]`}>
+          <div data-hud="progress" className={`panel px-3 py-1.5 ${touch ? "w-[300px]" : "w-[460px]"} max-w-[86vw]`}>
             <div className="flex items-center justify-between mb-1">
               <span className="flex items-center gap-1.5 font-display text-[11px] text-[#ff8095]">
                 <Icon name="crown" className="w-4 h-4 text-[#ffd94a]" />
@@ -119,18 +128,18 @@ export function HUD({
       </div>
 
       {/* phải trên: nút + chỉ số */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5">
-        <div className="flex gap-1.5 pointer-events-auto">
-          <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
-            <Icon name={hud.muted ? "mute" : "sound"} className="w-4 h-4" />
-          </button>
-          {!touch && (
+      <div className={`absolute flex flex-col gap-1.5 ${touch ? "top-[80px] inset-x-3 items-center" : "top-3 right-3 items-end"}`}>
+        {!touch && (
+          <div className="flex gap-1.5 pointer-events-auto">
+            <button onClick={onMute} className="btn-ghost !px-2.5 !py-1.5" title="Âm thanh (M)">
+              <Icon name={hud.muted ? "mute" : "sound"} className="w-4 h-4" />
+            </button>
             <button onClick={onPause} className="btn-ghost !px-2.5 !py-1.5" title="Tạm dừng (P)">
               <Icon name="pause" className="w-4 h-4" />
             </button>
-          )}
-        </div>
-        <div className="panel-deep px-3 py-1.5 flex items-center gap-3 text-[13px] font-bold tabular-nums">
+          </div>
+        )}
+        <div data-hud="stats" className="panel-deep px-3 py-1.5 flex items-center gap-3 text-[13px] font-bold tabular-nums">
           <span className="flex items-center gap-1.5">
             <Icon name="skull" className="w-4 h-4 text-[#ff8095]" />
             {hud.kills.toLocaleString("vi")}
@@ -147,7 +156,7 @@ export function HUD({
       </div>
 
       {/* kỹ năng */}
-      <div className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[104px] left-3" : "bottom-3 left-3"}`}>
+      <div className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[214px] left-3" : "bottom-3 left-3"}`}>
         {hud.skills.map((s) => (
           <div
             key={s.id}
@@ -261,9 +270,11 @@ export function TouchControls({
   onMute: () => void;
   muted: boolean;
 }) {
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
   useEffect(() => {
-    return () => onMove(0, 0);
-  }, [onMove]);
+    return () => onMoveRef.current(0, 0);
+  }, []);
   return (
     <>
       <Joystick onMove={onMove} />

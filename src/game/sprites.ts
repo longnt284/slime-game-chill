@@ -2,17 +2,26 @@
 
 import type { HeroSkinDef } from "./shop";
 
-export type MobKind =
-  | "slime"
-  | "bat"
-  | "yeti"
-  | "scorpion"
-  | "mushroom"
-  | "imp"
-  | "fish"
-  | "ghost"
-  | "bird"
-  | "demon";
+export const MOB_KINDS = [
+  "slime",
+  "bat",
+  "yeti",
+  "scorpion",
+  "mushroom",
+  "imp",
+  "fish",
+  "ghost",
+  "bird",
+  "demon",
+  "spider",
+  "crab",
+  "golem",
+  "wisp",
+  "beetle",
+  "serpent",
+] as const;
+
+export type MobKind = (typeof MOB_KINDS)[number];
 
 export interface MobColors {
   M: string; // màu chính
@@ -319,6 +328,150 @@ const MOBS: Record<MobKind, MobDef> = {
       "............",
     ],
   },
+  spider: {
+    a: [
+      "D..........D",
+      ".D..MMMM..D.",
+      "..DMMMMMMD..",
+      "..MEMMMMEM..",
+      ".MMMMMMMMMM.",
+      "..MMMMMMMM..",
+      ".D.MMMMMM.D.",
+      "D...D..D...D",
+      "............",
+    ],
+    b: [
+      "............",
+      "D...MMMM...D",
+      ".DDMMMMMMDD.",
+      "..MEMMMMEM..",
+      ".MMMMMMMMMM.",
+      "..MMMMMMMM..",
+      "..DMMMMMMD..",
+      ".D..D..D..D.",
+      "............",
+    ],
+  },
+  crab: {
+    a: [
+      "............",
+      "XX........XX",
+      "XXX......XXX",
+      ".MMMMMMMMMM.",
+      "MMEMMMMMMEMM",
+      "MMMMMWWMMMMM",
+      ".MMMMMMMMMM.",
+      ".D.D.DD.D.D.",
+      "............",
+    ],
+    b: [
+      "XX........XX",
+      "XXX......XXX",
+      "............",
+      ".MMMMMMMMMM.",
+      "MMEMMMMMMEMM",
+      "MMMMMWWMMMMM",
+      ".MMMMMMMMMM.",
+      "D.D.D..D.D.D",
+      "............",
+    ],
+  },
+  golem: {
+    a: [
+      "..MMMMMMMM..",
+      ".MMMMMMMMMM.",
+      ".MMEMMMMEMM.",
+      ".MMMMXXMMMM.",
+      "MMMMMMMMMMMM",
+      "MMDMMMMMMDMM",
+      "MMMMMMMMMMMM",
+      "..MMM..MMM..",
+      "..DDD..DDD..",
+    ],
+    b: [
+      "............",
+      "..MMMMMMMM..",
+      ".MMMMMMMMMM.",
+      ".MMEMMMMEMM.",
+      ".MMMMXXMMMM.",
+      "MMMMMMMMMMMM",
+      "MMDMMMMMMDMM",
+      "..MMM..MMM..",
+      "..DDD..DDD..",
+    ],
+  },
+  wisp: {
+    a: [
+      "....XX.XX...",
+      "...XMMMMX...",
+      "..XMMMMMMX..",
+      ".XMMEMMEMMX.",
+      ".XMMMMMMMMX.",
+      "..XMMMMMMX..",
+      "...XMMMMX...",
+      "....X..X....",
+      "............",
+    ],
+    b: [
+      "............",
+      "....XMMX....",
+      "...XMMMMX...",
+      "..XMMEEMMX..",
+      "..XMMMMMMX..",
+      "...XMMMMX...",
+      "....XMMX....",
+      "...X....X...",
+      "............",
+    ],
+  },
+  beetle: {
+    a: [
+      "...X....X...",
+      "...XX..XX...",
+      "..MMMMMMMM..",
+      ".MMEMMMMEMM.",
+      ".MMMMDDMMMM.",
+      ".MMMMDDMMMM.",
+      ".MMMMMMMMMM.",
+      "..D.D..D.D..",
+      "............",
+    ],
+    b: [
+      "..X......X..",
+      "..XX....XX..",
+      "..MMMMMMMM..",
+      ".MMEMMMMEMM.",
+      ".MMMMDDMMMM.",
+      ".MMMMDDMMMM.",
+      ".MMMMMMMMMM.",
+      ".D..D..D..D.",
+      "............",
+    ],
+  },
+  serpent: {
+    a: [
+      "....MMMM....",
+      "...MMMMMM...",
+      "...MEMMEM...",
+      "...MMXXMM...",
+      "..MMMMMMMM..",
+      ".MMMMMMMM...",
+      "..MMMMMM....",
+      "...DDDD.....",
+      "............",
+    ],
+    b: [
+      "............",
+      "....MMMM....",
+      "...MMMMMM...",
+      "...MEMMEM...",
+      "...MMXXMM...",
+      "..MMMMMMMM..",
+      "...MMMMMMMM.",
+      ".....DDDD...",
+      "............",
+    ],
+  },
 };
 
 const CROWN = ["Y...YY...Y", "YY..YY..YY", "YYYYYYYYYY", "yYYYYYYYYy"];
@@ -332,6 +485,10 @@ const CORE_LEGEND: Record<string, string> = { C: "#ff9d2e", c: "#e2571b", W: "#f
 
 const HEART = [".RR..RR.", "RRRWRRRR", "RRRRRRRR", "RRRRRRRR", ".RRRRRR.", "..RRRR..", "...RR..."];
 const HEART_LEGEND: Record<string, string> = { R: "#ff4d6d", W: "#ffb3c1" };
+
+/* Mảnh vũ khí: một mẩu lưỡi kiếm gãy, tô theo màu của chiêu tương ứng. */
+const SHARD = ["....SS..", "...SSS..", "..SSSSs.", ".SSSSss.", "SSSSss..", "SSSss...", ".Sss....", "..s....."];
+const SHARD_LEGEND: Record<string, string> = { S: "#63e6ff", s: "#2f8fb5" };
 
 function makeSprite(rows: string[], legend: Record<string, string>): HTMLCanvasElement {
   const h = rows.length;
@@ -410,6 +567,17 @@ export function getItemSprite(kind: ItemKind): HTMLCanvasElement {
     else if (kind === "core") c = makeSprite(CORE, CORE_LEGEND);
     else if (kind === "heart") c = makeSprite(HEART, HEART_LEGEND);
     else c = makeSprite(CROWN, CROWN_LEGEND);
+    cache.set(key, c);
+  }
+  return c;
+}
+
+/** Mảnh vũ khí tô theo màu chiêu thức để nhìn là biết đang rơi mảnh của vũ khí nào. */
+export function getShardSprite(bright: string, dark: string): HTMLCanvasElement {
+  const key = `shard_${bright}_${dark}`;
+  let c = cache.get(key);
+  if (!c) {
+    c = makeSprite(SHARD, { ...SHARD_LEGEND, S: bright, s: dark });
     cache.set(key, c);
   }
   return c;

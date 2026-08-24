@@ -1,6 +1,8 @@
 import type { MobColors, MobKind } from "./sprites";
+import { MOB_KINDS } from "./sprites";
 import { bossStats } from "./balance";
 export { gemValue, mobDmg, mobHp, mobSpeed, waveQuota, xpNeed } from "./balance";
+export { MAX_SKILL_TIER, SHARD_NEED, shardNeed } from "./balance";
 
 /* ============================ BIOMES ============================ */
 
@@ -129,6 +131,78 @@ export const BIOMES: Biome[] = [
     bossPalettes: [P("#f5f0e6", "#c9bfa8", "#ffb03e"), P("#f0d8f5", "#c0a0c9", "#ffd94a"), P("#d8f0f5", "#a0c0c9", "#ff8080")],
   },
   {
+    name: "Đồng Hoa Dại",
+    sub: "Phấn hoa ngọt lịm che giấu nanh vuốt",
+    ground: ["#8fb85e", "#7ea551", "#a3cc72"],
+    mob: P("#e86fa8", "#b23f78", "#fff0a0"),
+    mobName: "Nhện Hoa",
+    mobKind: "spider",
+    ambient: { type: "petal", color: "#ffc6e0" },
+    fog: "rgba(255,190,220,0.10)",
+    decors: ["flower", "tuft", "vine"],
+    bossPalettes: [P("#e86fa8", "#b23f78", "#fff0a0"), P("#c99ae8", "#9268b8", "#ffd94a"), P("#8fd06f", "#5fa042", "#ff8080")],
+  },
+  {
+    name: "Bãi Đá Ngầm",
+    sub: "Sóng ngầm nghiến vào đá đen",
+    ground: ["#7f8c96", "#707d87", "#93a0aa"],
+    mob: P("#f2793f", "#b8481c", "#ffe08a"),
+    mobName: "Cua Đá",
+    mobKind: "crab",
+    ambient: { type: "bubble", color: "#cfeaff" },
+    fog: "rgba(40,70,95,0.18)",
+    decors: ["shell", "coral", "stone"],
+    bossPalettes: [P("#f2793f", "#b8481c", "#ffe08a"), P("#4fb3bf", "#2f8a96", "#ffd23e"), P("#9b7fc4", "#6d5590", "#7fe0ff")],
+  },
+  {
+    name: "Phế Tích Cổ",
+    sub: "Đá tảng thức giấc sau ngàn năm",
+    ground: ["#a89a80", "#988a70", "#bcae94"],
+    mob: P("#8f9a86", "#5f6a58", "#7fe0ff"),
+    mobName: "Golem Đá",
+    mobKind: "golem",
+    ambient: { type: "dust", color: "#e0d4b8" },
+    fog: "rgba(90,80,60,0.16)",
+    decors: ["obelisk", "stone", "crack"],
+    bossPalettes: [P("#8f9a86", "#5f6a58", "#7fe0ff"), P("#c0a878", "#8f7a4c", "#ffd94a"), P("#7f8fd4", "#5560a3", "#b8ff8a")],
+  },
+  {
+    name: "Rừng Nấm Lân",
+    sub: "Bào tử phát sáng trong bóng tối ẩm",
+    ground: ["#3d3a5c", "#34314f", "#4a476b"],
+    mob: P("#5fe8c0", "#2fa88a", "#ff8ae0"),
+    mobName: "Đom Đóm Ma",
+    mobKind: "wisp",
+    ambient: { type: "spore", color: "#8fffd8" },
+    fog: "rgba(30,20,60,0.28)",
+    decors: ["mushroom", "crystal", "vine"],
+    bossPalettes: [P("#5fe8c0", "#2fa88a", "#ff8ae0"), P("#a86ad9", "#7a43a3", "#8fffd8"), P("#e8e05f", "#a8a02f", "#7fe0ff")],
+  },
+  {
+    name: "Sa Mạc Muối",
+    sub: "Trắng xóa tới tận chân trời",
+    ground: ["#e6e2d4", "#d8d3c3", "#f2eee2"],
+    mob: P("#c4a86f", "#8f7642", "#5fd0e8"),
+    mobName: "Bọ Muối",
+    mobKind: "beetle",
+    ambient: { type: "sand", color: "#fffaf0" },
+    fog: "rgba(230,225,200,0.16)",
+    decors: ["bone", "crystal", "stone"],
+    bossPalettes: [P("#c4a86f", "#8f7642", "#5fd0e8"), P("#d98e3f", "#a35f22", "#ffe08a"), P("#8fb0c4", "#5f7f92", "#ffd94a")],
+  },
+  {
+    name: "Hang Rồng",
+    sub: "Hơi thở lửa vọng từ lòng núi",
+    ground: ["#5a3a2e", "#4c3026", "#6b483a"],
+    mob: P("#e8c23f", "#b0871c", "#ff5a5a"),
+    mobName: "Xà Long",
+    mobKind: "serpent",
+    ambient: { type: "ember", color: "#ffb03e" },
+    fog: "rgba(90,40,10,0.22)",
+    decors: ["crack", "obelisk", "crystal"],
+    bossPalettes: [P("#e8c23f", "#b0871c", "#ff5a5a"), P("#e25822", "#a33413", "#ffd23e"), P("#c44f8f", "#8f2f62", "#ffe08a")],
+  },
+  {
     name: "Địa Ngục",
     sub: "Cửa ải cuối cùng của 100 màn",
     ground: ["#3b2026", "#321a20", "#45262e"],
@@ -142,7 +216,16 @@ export const BIOMES: Biome[] = [
   },
 ];
 
-export const biomeOf = (stage: number): Biome => BIOMES[Math.min(9, Math.floor((stage - 1) / 10))];
+/** Chia đều 100 màn cho toàn bộ biome, màn cuối luôn rơi vào bản đồ cuối. */
+export const biomeOf = (stage: number): Biome => {
+  const s = Math.max(1, Math.min(TOTAL_STAGES, Math.floor(stage) || 1));
+  const span = TOTAL_STAGES / BIOMES.length;
+  return BIOMES[Math.min(BIOMES.length - 1, Math.floor((s - 1) / span))];
+};
+
+/** Biome dùng làm nguồn quái "khách" trộn vào đợt spawn cho đỡ đơn điệu. */
+export const altBiomeOf = (biome: Biome): Biome =>
+  BIOMES[(BIOMES.indexOf(biome) + Math.floor(BIOMES.length / 2) + 1) % BIOMES.length];
 
 /* ============================ SKILLS ============================ */
 
@@ -157,6 +240,8 @@ export interface SkillDef {
   icon: string;
   desc: string;
   evoDesc: string;
+  /** Mô tả sức mạnh mở ra ở từng bậc 1..6, dùng cho thẻ nâng cấp và HUD. */
+  tiers: string[];
 }
 
 export const SKILLS: SkillDef[] = [
@@ -167,6 +252,14 @@ export const SKILLS: SkillDef[] = [
     icon: "bolt",
     desc: "Phóng bùa vào kẻ địch gần nhất",
     evoDesc: "Hóa rồng truy đuổi, xuyên thủng mọi kẻ địch",
+    tiers: [
+      "Một tia bùa bắn thẳng vào địch gần nhất",
+      "Bắn hai tia, quạt bùa xòe rộng gấp đôi",
+      "Bùa xuyên qua một kẻ địch rồi bay tiếp",
+      "Ba tia cùng lúc, xuyên hai kẻ địch",
+      "Bốn tia phủ kín một góc rộng trước mặt",
+      "Năm tia khổng lồ xuyên thủng cả hàng quái",
+    ],
   },
   {
     id: "orbit",
@@ -175,6 +268,14 @@ export const SKILLS: SkillDef[] = [
     icon: "orbit",
     desc: "Kiếm xoay quanh bảo vệ thân thể",
     evoDesc: "Lưỡi hái tử thần xé gió tầm xa",
+    tiers: [
+      "Hai lưỡi kiếm quét nửa vòng 180 độ trước mặt",
+      "Kiếm khép kín trọn vòng 360 độ quanh thân",
+      "Ba lưỡi, vòng quét rộng và chém nhanh hơn",
+      "Bốn lưỡi kiếm, bán kính vươn xa hơn nữa",
+      "Năm lưỡi kiếm rực sáng, nhịp chém dồn dập",
+      "Sáu lưỡi khổng lồ dựng thành bão kiếm",
+    ],
   },
   {
     id: "aura",
@@ -183,6 +284,14 @@ export const SKILLS: SkillDef[] = [
     icon: "aura",
     desc: "Sát thương kẻ địch ở gần mỗi nhịp",
     evoDesc: "Thiêu đốt diện rộng, mạnh gấp bội",
+    tiers: [
+      "Quét nắng nửa vòng 180 độ, trúng 4 kẻ địch",
+      "Mở trọn 360 độ, trúng tới 6 kẻ địch",
+      "Vùng nắng rộng hơn, trúng 9 kẻ địch",
+      "Nhịp quét nhanh hơn, trúng 13 kẻ địch",
+      "Vầng nắng chói lòa, trúng 18 kẻ địch",
+      "Bão nắng phủ kín màn hình, trúng 26 kẻ địch",
+    ],
   },
   {
     id: "zap",
@@ -190,7 +299,15 @@ export const SKILLS: SkillDef[] = [
     evoName: "Bão Sét Giận Dữ",
     icon: "zap",
     desc: "Gọi sét đánh kẻ địch ngẫu nhiên",
-    evoDesc: "Sét lan truyền sang 6 mục tiêu",
+    evoDesc: "Sét lan truyền qua cả đám đông",
+    tiers: [
+      "Một tia sét giáng xuống một mục tiêu",
+      "Hai tia sét, mỗi tia nổ lan ra xung quanh",
+      "Vùng nổ rộng hơn sau mỗi cú sét",
+      "Ba tia sét cùng lúc, nổ mạnh hơn",
+      "Bốn tia sét xé toạc chiến trường",
+      "Năm tia sét kèm vùng nổ khổng lồ",
+    ],
   },
   {
     id: "boom",
@@ -199,6 +316,14 @@ export const SKILLS: SkillDef[] = [
     icon: "boom",
     desc: "Ném boomerang xuyên địch, bay về tay",
     evoDesc: "Nguyệt đao kép khổng lồ càn quét",
+    tiers: [
+      "Một lưỡi bay thẳng, xuyên hết hàng quái",
+      "Lưỡi to hơn và bay xa hơn",
+      "Ném hai lưỡi tỏa thành hình quạt",
+      "Quạt rộng hơn, lưỡi nặng đô hơn",
+      "Ba lưỡi cùng bay, phủ kín một vùng rộng",
+      "Ba nguyệt đao khổng lồ quét sạch lối đi",
+    ],
   },
   {
     id: "frost",
@@ -207,6 +332,14 @@ export const SKILLS: SkillDef[] = [
     icon: "frost",
     desc: "Rơi băng xuống đầu địch, làm chậm",
     evoDesc: "Bão băng hủy diệt đóng băng tất cả",
+    tiers: [
+      "Hai tảng băng rơi xuống, trúng 5 kẻ địch",
+      "Ba tảng băng, vùng nổ rộng hơn",
+      "Bốn tảng băng, trúng tới 10 kẻ địch",
+      "Năm tảng băng phủ băng cả một vùng",
+      "Sáu tảng băng, trúng 19 kẻ địch",
+      "Bảy tảng băng khổng lồ, trúng 26 kẻ địch",
+    ],
   },
 ];
 
@@ -298,7 +431,7 @@ export function mulberry32(seed: number) {
 export function makeBoss(stage: number): BossInfo {
   const biome = biomeOf(stage);
   const rnd = mulberry32(stage * 9973 + 17);
-  const kind: MobKind = rnd() < 0.72 ? biome.mobKind : (["slime", "bat", "yeti", "scorpion", "mushroom", "imp", "fish", "ghost", "bird", "demon"] as MobKind[])[Math.floor(rnd() * 10)];
+  const kind: MobKind = rnd() < 0.72 ? biome.mobKind : MOB_KINDS[Math.floor(rnd() * MOB_KINDS.length)];
   const colors = biome.bossPalettes[stage % 3];
   const king = stage % 10 === 0;
   const arch = king ? (stage / 10 - 1) % 5 : Math.floor(rnd() * 5);

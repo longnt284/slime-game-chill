@@ -1,27 +1,35 @@
 import { sfx } from "./audio";
-import { getHeroSprite, getMobSprite, getItemSprite } from "./sprites";
+import { getHeroSprite, getMobSprite, getItemSprite, getShardSprite } from "./sprites";
 import type { MobColors, MobKind } from "./sprites";
 import { HERO_SKINS, WEAPON_SKINS } from "./shop";
 import type { HeroSkinDef, WeaponSkinDef } from "./shop";
 import {
+  MAX_SKILL_TIER,
   bossAttackTiming,
   bossProjectileDamage,
   bossReward,
   bossXp,
   enemySpeed,
   enemyXp,
+  shardNeed,
   skillTuning,
 } from "./balance";
+import type { SkillTuning } from "./balance";
 import {
   applyChoice as applyProgressionChoice,
   createInitialProgression,
+  grantShard,
+  pickShardTarget,
   rollChoices as buildChoices,
+  shardTargets,
 } from "./progression";
+import type { ProgressionState } from "./progression";
 import { aimVector, capFx, telegraphAlpha } from "./visuals";
 import {
   BIOMES,
   WORLD,
   TOTAL_STAGES,
+  altBiomeOf,
   biomeOf,
   makeBoss,
   mulberry32,
@@ -40,8 +48,13 @@ export interface HudSkill {
   id: string;
   name: string;
   icon: string;
+  /** Bậc hiện tại của vũ khí, tối đa MAX_SKILL_TIER. */
   lv: number;
+  maxLv: number;
   evolved: boolean;
+  /** Số mảnh đang gom và số mảnh cần để lên bậc kế (0 khi đã tối đa). */
+  shards: number;
+  shardNeed: number;
 }
 export interface HudData {
   hp: number;
@@ -148,6 +161,8 @@ interface Shot {
   tx: number;
   ty: number;
   evolved: boolean;
+  /** Hệ số hiệu ứng theo bậc: đạn bậc cao to và rực hơn. */
+  fx: number;
   hitIds: Set<Enemy>;
 }
 interface EBullet {
@@ -165,9 +180,11 @@ interface Pickup {
   y: number;
   vx: number;
   vy: number;
-  kind: "xp" | "core" | "heart";
+  kind: "xp" | "core" | "heart" | "shard";
   val: number;
   t: number;
+  /** Chiêu thức mà mảnh này thuộc về (chỉ có với kind "shard"). */
+  skill?: SkillId;
 }
 interface Particle {
   x: number;
@@ -201,6 +218,21 @@ interface Ring {
   life: number;
   color: string;
   width: number;
+  /** Số vòng vẽ chồng lên nhau, càng cao bậc càng dày và rực. */
+  layers: number;
+}
+/** Vệt quét hình rẻ quạt của hào quang và kiếm: thể hiện đúng độ phủ theo bậc. */
+interface Sweep {
+  x: number;
+  y: number;
+  angle: number;
+  arc: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  glow: string;
+  fx: number;
 }
 interface Trail {
   x: number;
@@ -229,6 +261,8 @@ interface Frost {
   dur: number;
   dmg: number;
   aoe: number;
+  maxTargets: number;
+  fx: number;
 }
 interface Decor {
   x: number;
@@ -275,7 +309,7 @@ export class Engine {
   private joy = { x: 0, y: 0, active: false };
   private heroSkin: HeroSkinDef = HERO_SKINS[0];
   private weaponSkin: WeaponSkinDef = WEAPON_SKINS[0];
-  private orbitPts: { x: number; y: number; ev: boolean }[] = [];
+  private orbitPts: { x: number; y: number; ev: boolean; fx: number }[] = [];
 
   // progression
   private stage = 1;
@@ -298,8 +332,11 @@ export class Engine {
   };
   private passives: Record<PassiveId, number> = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
   private masteries: Record<MasteryId, number> = { force: 0, vitality: 0, swiftness: 0, vacuum: 0 };
+  private shards: Record<SkillId, number> = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
   private cds: Record<SkillId, number> = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
   private orbitT = 0;
+  /** Hướng nhân vật đang nhắm, dùng cho các chiêu quét theo cung. */
+  private aimA = 0;
   private choices: Choice[] = [];
 
   // waves
@@ -319,6 +356,7 @@ export class Engine {
   private dmgs: DmgNum[] = [];
   private zaps: Zap[] = [];
   private rings: Ring[] = [];
+  private sweeps: Sweep[] = [];
   private trails: Trail[] = [];
   private telegraphs: Telegraph[] = [];
   private frosts: Frost[] = [];
@@ -419,6 +457,7 @@ export class Engine {
     this.skills = progression.skills;
     this.passives = progression.passives;
     this.masteries = progression.masteries;
+    this.shards = progression.shards;
     this.cds = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
     this.regenAcc = 0;
     this.orbitT = 0;
@@ -494,10 +533,11 @@ export class Engine {
     this.px = WORLD / 2;
     this.py = WORLD / 2;
     this.enemies = [];
-    this.shots = [];
-    this.ebullets = [];
-    this.frosts = [];
-    this.pickups = [];
+    // Dọn sạch mọi hiệu ứng của màn cũ, nếu không vòng cảnh báo hay vệt đạn
+    // của trùm vừa chết sẽ còn treo lại giữa bản đồ mới.
+    this.clearFx();
+    this.shake = 0;
+    this.hitStop = 0;
     this.wave = 1;
     this.waveKills = 0;
     this.spawnT = 0.5;
@@ -510,24 +550,36 @@ export class Engine {
     sfx.wave();
   }
 
+  /** Gói toàn bộ tiến trình thành một state thuần để các hàm trong progression.ts xử lý. */
+  private progressionState(): ProgressionState {
+    return {
+      skills: this.skills,
+      passives: this.passives,
+      masteries: this.masteries,
+      shards: this.shards,
+      cores: this.cores,
+    };
+  }
+
+  private applyProgression(state: ProgressionState) {
+    this.skills = state.skills;
+    this.passives = state.passives;
+    this.masteries = state.masteries;
+    this.shards = state.shards;
+    this.cores = state.cores;
+  }
+
   choose(i: number) {
     const c = this.choices[i];
     if (!c) return;
     sfx.click();
-    const progression = applyProgressionChoice({
-      skills: this.skills,
-      passives: this.passives,
-      masteries: this.masteries,
-      cores: this.cores,
-    }, c);
-    this.skills = progression.skills;
-    this.passives = progression.passives;
-    this.masteries = progression.masteries;
-    this.cores = progression.cores;
+    this.applyProgression(applyProgressionChoice(this.progressionState(), c));
 
-    if (c.kind === "evolve") {
+    if (c.kind === "up") {
+      this.tierUpFx(c.id as SkillId, this.skills[c.id as SkillId].lv);
+    } else if (c.kind === "evolve") {
       sfx.evolve();
-      this.ring(this.px, this.py, 10, 160, 0.6, "#ffd94a", 6);
+      this.ring(this.px, this.py, 10, 160, 0.6, "#ffd94a", 6, 3);
       this.burst(this.px, this.py, 26, "#ffd94a", 220);
       this.shake = Math.max(this.shake, 6);
     } else if (c.kind === "passive" && c.id === "heart") {
@@ -580,7 +632,16 @@ export class Engine {
       .map((id) => {
         const d = skillDef(id);
         const s = this.skills[id];
-        return { id, icon: d.icon, lv: s.lv, evolved: s.evolved, name: s.evolved ? d.evoName : d.name };
+        return {
+          id,
+          icon: d.icon,
+          lv: s.lv,
+          maxLv: MAX_SKILL_TIER,
+          evolved: s.evolved,
+          shards: this.shards[id],
+          shardNeed: shardNeed(s.lv),
+          name: s.evolved ? d.evoName : d.name,
+        };
       });
     this.hooks.onHud({
       hp: Math.ceil(this.hp),
@@ -691,13 +752,13 @@ export class Engine {
     const size = 3 + Math.floor(Math.random() * 4) + Math.floor(this.stage / 12);
     const baseA = Math.random() * Math.PI * 2;
     const kind2 = Math.random() < 0.22;
-    const altKind = BIOMES[(BIOMES.indexOf(this.biome) + 9) % 10].mobKind;
+    const alt = altBiomeOf(this.biome);
     for (let i = 0; i < size; i++) {
       const a = baseA + rand(-0.7, 0.7);
       const d = rand(460, 640);
       const elite = Math.random() < 0.035;
-      const kind = kind2 ? altKind : this.biome.mobKind;
-      const col = kind === this.biome.mobKind ? this.biome.mob : BIOMES[(BIOMES.indexOf(this.biome) + 9) % 10].mob;
+      const kind = kind2 ? alt.mobKind : this.biome.mobKind;
+      const col = kind === this.biome.mobKind ? this.biome.mob : alt.mob;
       const e = this.makeEnemy(kind, col, this.px + Math.cos(a) * d, this.py + Math.sin(a) * d, this.stage, Math.min(this.wave, 3), elite, this.wave >= 4);
       this.enemies.push(e);
       this.puff(e.x, e.y, col.M);
@@ -752,8 +813,13 @@ export class Engine {
   private puff(x: number, y: number, color: string) {
     this.burst(x, y, 6, color, 90);
   }
-  private ring(x: number, y: number, r: number, maxR: number, life: number, color: string, width: number) {
-    this.rings.push({ x, y, r, maxR, life, color, width });
+  private ring(x: number, y: number, r: number, maxR: number, life: number, color: string, width: number, layers = 1) {
+    this.rings.push({ x, y, r, maxR, life, color, width, layers });
+  }
+
+  /** Vệt quét hình rẻ quạt: arc >= 2PI thì vẽ trọn vòng. */
+  private sweep(angle: number, arc: number, radius: number, life: number, color: string, glow: string, fx: number) {
+    this.sweeps.push({ x: this.px, y: this.py - 6, angle, arc, radius, life, maxLife: life, color, glow, fx });
   }
   private dmgNum(x: number, y: number, text: string, color: string, size = 15) {
     if (this.dmgs.length > 90) this.dmgs.shift();
@@ -786,6 +852,7 @@ export class Engine {
       return;
     }
     if (e.xp > 0) this.dropPickup(e.x, e.y, "xp", e.xp);
+    this.dropShards(e.x, e.y, e.elite ? 3 : 1, e.elite ? 0.85 : 0.14);
     if (e.elite) {
       if (Math.random() < 0.65) this.dropPickup(e.x + rand(-14, 14), e.y + rand(-10, 10), "core", 1);
     } else if (Math.random() < 0.02) {
@@ -812,9 +879,55 @@ export class Engine {
     }
   }
 
-  private dropPickup(x: number, y: number, kind: Pickup["kind"], val: number) {
+  private dropPickup(x: number, y: number, kind: Pickup["kind"], val: number, skill?: SkillId) {
     if (this.pickups.length > 220) return;
-    this.pickups.push({ x: x + rand(-8, 8), y: y + rand(-8, 8), vx: rand(-30, 30), vy: rand(-50, -20), kind, val, t: Math.random() * 2 });
+    this.pickups.push({ x: x + rand(-8, 8), y: y + rand(-8, 8), vx: rand(-30, 30), vy: rand(-50, -20), kind, val, t: Math.random() * 2, skill });
+  }
+
+  /**
+   * Rơi mảnh vũ khí. Mảnh chỉ rơi cho chiêu đang sở hữu và chưa tối đa bậc,
+   * nên người chơi không bao giờ nhặt được thứ vô dụng.
+   */
+  private dropShards(x: number, y: number, count: number, chance: number) {
+    const state = this.progressionState();
+    if (shardTargets(state).length === 0) return;
+    for (let i = 0; i < count; i++) {
+      if (Math.random() >= chance) continue;
+      const id = pickShardTarget(state);
+      if (!id) return;
+      this.dropPickup(x + rand(-12, 12), y + rand(-10, 10), "shard", 1, id);
+    }
+  }
+
+  /** Màu của mảnh vũ khí lấy theo bảng màu skin vũ khí đang trang bị. */
+  private shardColors(id: SkillId): [string, string] {
+    const w = this.weaponSkin;
+    switch (id) {
+      case "bolt": return [w.bolt, w.core];
+      case "orbit": return [w.blade, w.blade2];
+      case "aura": return [w.aura, w.glow];
+      case "zap": return ["#cfefff", "#5c8eff"];
+      case "boom": return [w.glow, w.blade2];
+      default: return ["#bff3ff", "#4ab0e8"];
+    }
+  }
+
+  /** Ăn mừng một bậc vũ khí mới: banner, vòng sáng và tiếng tiến hóa. */
+  private tierUpFx(id: SkillId, tier: number) {
+    const def = skillDef(id);
+    const [bright] = this.shardColors(id);
+    this.banner(`${def.name.toUpperCase()} — BẬC ${tier}`, def.tiers[tier - 1] ?? "Sức mạnh mới được khai mở");
+    this.ring(this.px, this.py, 12, 150 + tier * 12, 0.55, bright, 5, tier >= 4 ? 3 : 2);
+    this.burst(this.px, this.py, 18 + tier * 3, bright, 210);
+    this.shake = Math.max(this.shake, 4);
+    sfx.evolve();
+  }
+
+  private collectShard(id: SkillId) {
+    const result = grantShard(this.progressionState(), id);
+    this.applyProgression(result.state);
+    if (result.tierUp !== null) this.tierUpFx(id, result.tierUp);
+    else sfx.gem();
   }
 
   private onBossKilled(e: Enemy) {
@@ -825,7 +938,8 @@ export class Engine {
     this.goldRun += reward.gold;
     this.cores += reward.cores;
     this.dmgNum(e.x, e.y - e.r - 10, `+${reward.gold} vàng`, "#ffd94a", 19);
-    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", e.xp / 8);
+    for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 8));
+    this.dropShards(e.x, e.y, 6 + Math.floor(this.stage / 20), 1);
     if (Math.random() < 0.5) this.dropPickup(e.x, e.y + 20, "heart", 30);
     this.ebullets = [];
     this.stageClearT = 1.5;
@@ -855,12 +969,7 @@ export class Engine {
 
   /* ============ choices ============ */
   private rollChoices() {
-    this.choices = buildChoices({
-      skills: this.skills,
-      passives: this.passives,
-      masteries: this.masteries,
-      cores: this.cores,
-    });
+    this.choices = buildChoices(this.progressionState());
   }
 
   private gainXp(v: number) {
@@ -878,6 +987,21 @@ export class Engine {
   }
 
   /* ============ skills firing ============ */
+  /** Một lượt quét không cấp phát, dùng cho những chỗ chạy mỗi khung hình. */
+  private nearestEnemy(x: number, y: number, maxD: number): Enemy | null {
+    let best: Enemy | null = null;
+    let bestD = maxD * maxD;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const d = dist2(e.x, e.y, x, y);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
   private nearestEnemies(n: number, maxD: number): Enemy[] {
     const list: { e: Enemy; d: number }[] = [];
     for (const e of this.enemies) {
@@ -887,6 +1011,47 @@ export class Engine {
     }
     list.sort((a, b) => a.d - b.d);
     return list.slice(0, n).map((l) => l.e);
+  }
+
+  /** Chênh lệch góc tuyệt đối, quy về khoảng [0, PI]. */
+  private static angleGap(a: number, b: number): number {
+    let diff = (a - b) % (Math.PI * 2);
+    if (diff > Math.PI) diff -= Math.PI * 2;
+    if (diff < -Math.PI) diff += Math.PI * 2;
+    return Math.abs(diff);
+  }
+
+  /**
+   * Kẻ địch nằm trong tầm và trong cung quét, sắp xếp theo khoảng cách và
+   * cắt bớt theo giới hạn số mục tiêu của bậc hiện tại.
+   */
+  private targetsInArc(
+    cx: number,
+    cy: number,
+    radius: number,
+    arc: number,
+    angle: number,
+    maxTargets: number,
+  ): Enemy[] {
+    const full = arc >= Math.PI * 2;
+    const half = arc / 2;
+    const list: { e: Enemy; d: number }[] = [];
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const reach = radius + e.r;
+      const d = dist2(e.x, e.y, cx, cy);
+      if (d > reach * reach) continue;
+      if (!full && Engine.angleGap(Math.atan2(e.y - cy, e.x - cx), angle) > half) continue;
+      list.push({ e, d });
+    }
+    list.sort((a, b) => a.d - b.d);
+    return list.slice(0, Math.max(1, maxTargets)).map((item) => item.e);
+  }
+
+  /** Góc của tia thứ i trong một chùm gồm count tia trải đều trên cung arc. */
+  private static fanAngle(base: number, index: number, count: number, arc: number): number {
+    if (count <= 1 || arc <= 0) return base;
+    return base + (index - (count - 1) / 2) * (arc / (count - 1));
   }
 
   private fireSkills(dt: number) {
@@ -903,13 +1068,15 @@ export class Engine {
       if (targets.length) {
         const ev = bolt.evolved;
         const dmg = tuning.damage * P;
+        const t = targets[0];
+        const aim = Math.atan2(t.y - this.py, t.x - this.px);
         for (let i = 0; i < tuning.count; i++) {
-          const t = targets[i % targets.length];
-          const base = Math.atan2(t.y - this.py, t.x - this.px) + (i - (tuning.count - 1) / 2) * 0.16;
-          const sp = 480;
+          const base = Engine.fanAngle(aim, i, tuning.count, tuning.arc);
+          const sp = 480 + tuning.fx * 40;
           this.shots.push({
             kind: "bolt", x: this.px, y: this.py - 14, vx: Math.cos(base) * sp, vy: Math.sin(base) * sp,
-            dmg, pierce: bolt.lv >= 5 || ev ? 99 : 0, life: 1.4, homing: ev, r: tuning.radius, spin: 0, t: 0, dur: 1, sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, hitIds: new Set(),
+            dmg, pierce: tuning.pierce, life: 1.4, homing: ev, r: tuning.radius, spin: 0, t: 0, dur: 1,
+            sx: 0, sy: 0, tx: 0, ty: 0, evolved: ev, fx: tuning.fx, hitIds: new Set(),
           });
         }
         this.cds.bolt = tuning.cooldown * C;
@@ -931,18 +1098,20 @@ export class Engine {
           const idx = Math.floor(Math.random() * poolZ.length);
           chosen.push(poolZ.splice(idx, 1)[0]);
         }
+        // Một kẻ địch chỉ ăn một lần trong cùng nhịp sét, kể cả khi sét lan qua lại.
+        const struck = new Set<Enemy>(chosen);
         for (const t of chosen) {
-          this.strikeZap(t, dmg, this.px, this.py - 20);
-          if (ev) {
-            let from = t;
-            let chainDmg = dmg * 0.6;
-            for (let c = 0; c < 6; c++) {
-              const next = this.enemies.filter((e) => !e.dead && e !== from && !chosen.includes(e) && dist2(e.x, e.y, from.x, from.y) < 170 * 170)[0];
-              if (!next) break;
-              this.strikeZap(next, chainDmg, from.x, from.y);
-              chainDmg *= 0.8;
-              from = next;
-            }
+          this.strikeZap(t, dmg, this.px, this.py - 20, tuning);
+          if (!ev) continue;
+          let from = t;
+          let chainDmg = dmg * 0.6;
+          for (let c = 0; c < tuning.maxTargets; c++) {
+            const next = this.nearestTo(from, 190, struck);
+            if (!next) break;
+            struck.add(next);
+            this.strikeZap(next, chainDmg, from.x, from.y, tuning);
+            chainDmg *= 0.8;
+            from = next;
           }
         }
         this.cds.zap = tuning.cooldown * C;
@@ -957,15 +1126,12 @@ export class Engine {
       const ev = aura.evolved;
       const tuning = skillTuning("aura", aura.lv, ev);
       const dmg = tuning.damage * P;
-      let hitAny = false;
-      for (const e of this.enemies) {
-        if (!e.dead && dist2(e.x, e.y, this.px, this.py) < (tuning.radius + e.r) * (tuning.radius + e.r)) {
-          this.damageEnemy(e, dmg);
-          hitAny = true;
-        }
-      }
-      this.ring(this.px, this.py, 20, tuning.radius, 0.35, ev ? this.weaponSkin.glow : this.weaponSkin.aura, ev ? 6 : 4);
-      if (hitAny) sfx.hit();
+      const hits = this.targetsInArc(this.px, this.py, tuning.radius, tuning.arc, this.aimA, tuning.maxTargets);
+      for (const e of hits) this.damageEnemy(e, dmg);
+      const color = ev ? this.weaponSkin.glow : this.weaponSkin.aura;
+      this.sweep(this.aimA, tuning.arc, tuning.radius, 0.34, color, this.weaponSkin.glow, tuning.fx);
+      this.ring(this.px, this.py, 20, tuning.radius, 0.35, color, 3 + tuning.fx, tuning.fx >= 1.6 ? 2 : 1);
+      if (hits.length) sfx.hit();
       this.cds.aura = tuning.cooldown * C;
     }
 
@@ -977,14 +1143,14 @@ export class Engine {
       const t = this.nearestEnemies(1, tuning.range)[0];
       if (t) {
         const dmg = tuning.damage * P;
+        const aim = Math.atan2(t.y - this.py, t.x - this.px);
+        const d = clamp(Math.sqrt(dist2(t.x, t.y, this.px, this.py)), 140, tuning.range * 0.7);
         for (let i = 0; i < tuning.count; i++) {
-          const off = (i - (tuning.count - 1) / 2) * 0.5;
-          const a = Math.atan2(t.y - this.py, t.x - this.px) + off;
-          const d = clamp(Math.sqrt(dist2(t.x, t.y, this.px, this.py)), 120, 420);
+          const a = Engine.fanAngle(aim, i, tuning.count, tuning.arc);
           this.shots.push({
             kind: "boom", x: this.px, y: this.py - 10, vx: 0, vy: 0, dmg, pierce: 99, life: 3, homing: false,
             r: tuning.radius, spin: Math.random() * 6, t: 0, dur: 0.5, sx: this.px, sy: this.py - 10,
-            tx: this.px + Math.cos(a) * d, ty: this.py + Math.sin(a) * d, evolved: ev, hitIds: new Set(),
+            tx: this.px + Math.cos(a) * d, ty: this.py + Math.sin(a) * d, evolved: ev, fx: tuning.fx, hitIds: new Set(),
           });
         }
         this.cds.boom = tuning.cooldown * C;
@@ -1002,7 +1168,10 @@ export class Engine {
         const dmg = tuning.damage * P;
         for (let i = 0; i < tuning.count; i++) {
           const t = targets[Math.floor(Math.random() * targets.length)];
-          this.frosts.push({ x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45, dmg, aoe: tuning.radius });
+          this.frosts.push({
+            x: t.x + rand(-20, 20), y: t.y - 300, ty: t.y, t: 0, dur: 0.45,
+            dmg, aoe: tuning.radius, maxTargets: tuning.maxTargets, fx: tuning.fx,
+          });
         }
         this.cds.frost = tuning.cooldown * C;
         sfx.frost();
@@ -1010,7 +1179,22 @@ export class Engine {
     }
   }
 
-  private strikeZap(e: Enemy, dmg: number, ox: number, oy: number) {
+  /** Kẻ địch còn sống gần nhất quanh một điểm, bỏ qua những kẻ đã bị đánh dấu. */
+  private nearestTo(from: Enemy, maxD: number, skip: Set<Enemy>): Enemy | null {
+    let best: Enemy | null = null;
+    let bestD = maxD * maxD;
+    for (const e of this.enemies) {
+      if (e.dead || e === from || skip.has(e)) continue;
+      const d = dist2(e.x, e.y, from.x, from.y);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  private strikeZap(e: Enemy, dmg: number, ox: number, oy: number, tuning: SkillTuning) {
     const pts: { x: number; y: number }[] = [];
     const steps = 5;
     for (let i = 0; i <= steps; i++) {
@@ -1021,8 +1205,16 @@ export class Engine {
       });
     }
     this.zaps.push({ pts, life: 0.16 });
-    this.burst(e.x, e.y, 5, "#cfefff", 130);
+    this.burst(e.x, e.y, Math.round(4 * tuning.fx), "#cfefff", 130);
     this.damageEnemy(e, dmg);
+    // Từ bậc 2, mỗi cú sét còn nổ lan ra quanh điểm đánh.
+    if (tuning.radius <= 0) return;
+    this.ring(e.x, e.y, 6, tuning.radius, 0.3, "#9bd0ff", 2 + tuning.fx, tuning.fx >= 1.6 ? 2 : 1);
+    const splash = this.targetsInArc(e.x, e.y, tuning.radius, Math.PI * 2, 0, tuning.maxTargets + 1);
+    for (const other of splash) {
+      if (other === e) continue;
+      this.damageEnemy(other, dmg * 0.55);
+    }
   }
 
   /* ============ update ============ */
@@ -1086,6 +1278,15 @@ export class Engine {
       if (mx !== 0) this.face = mx > 0 ? 1 : -1;
       this.walkT += dt;
       if (Math.random() < dt * 7) this.puff(this.px + rand(-6, 6), this.py + 14, hexToRgba("#8a6a44", 0.9));
+    }
+
+    // Hướng nhắm cho các chiêu quét theo cung: đang chạy thì quét theo hướng chạy,
+    // đứng yên thì quay về phía kẻ địch gần nhất.
+    if (this.moving) {
+      this.aimA = Math.atan2(my, mx);
+    } else {
+      const near = this.nearestEnemy(this.px, this.py, 900);
+      if (near) this.aimA = Math.atan2(near.y - this.py, near.x - this.px);
     }
     // regen
     this.regenAcc += 0.7 * this.passives.regen * dt;
@@ -1153,6 +1354,8 @@ export class Engine {
         s.y += s.vy * dt;
         if (s.evolved && Math.random() < dt * 30) this.particles.push({ x: s.x, y: s.y, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.3, maxLife: 0.3, size: 3, color: "#ffd94a", grav: 0 });
       } else {
+        // sx/sy là điểm ném ban đầu và phải giữ nguyên: nếu gán lại theo vị trí
+        // hiện tại thì độ vồng sin bị cộng dồn mỗi khung hình và boomerang bay lệch.
         s.t += dt / s.dur;
         if (s.t <= 1) {
           s.x = s.sx + (s.tx - s.sx) * s.t;
@@ -1164,8 +1367,6 @@ export class Engine {
         } else {
           s.life = 0;
         }
-        s.sx = s.x;
-        s.sy = s.y;
       }
       if (Math.random() < Math.min(1, dt * 48)) {
         const maxLife = s.kind === "bolt" ? 0.18 : 0.26;
@@ -1174,7 +1375,7 @@ export class Engine {
           y: s.y,
           life: maxLife,
           maxLife,
-          size: s.kind === "bolt" ? (s.evolved ? 9 : 6) : (s.evolved ? 13 : 9),
+          size: (s.kind === "bolt" ? 5 : 7) * s.fx,
           color: s.evolved ? this.weaponSkin.glow : s.kind === "bolt" ? this.weaponSkin.bolt : this.weaponSkin.blade,
         });
       }
@@ -1186,7 +1387,6 @@ export class Engine {
           s.hitIds.add(e);
           const kx = e.boss ? 0 : (s.vx !== 0 || s.vy !== 0 ? Math.sign(s.vx) * 6 : 0);
           this.damageEnemy(e, s.dmg, kx, 0);
-          if (s.kind === "boom") e.bladeCd = 0.25;
           if (s.pierce > 0 && s.pierce < 90) s.pierce--;
           else if (s.pierce === 0) {
             s.life = 0;
@@ -1204,24 +1404,34 @@ export class Engine {
       const tuning = skillTuning("orbit", orbit.lv, ev);
       const dmg = tuning.damage * this.power();
       const bspd = 2.4 + orbit.lv * 0.15;
-      this.orbitBlades = { n: tuning.count, radius: tuning.radius, dmg, bspd, ev };
+      // Ở bậc 1 các lưỡi chỉ trải trên nửa vòng nên vệt quét là một cung 180 độ
+      // đang xoay; từ bậc 2 arc bằng 2PI nên khoảng cách đều nhau thành vòng kín.
+      const spacing = tuning.arc / tuning.count;
+      const bladeR = 12 + 5 * tuning.fx;
       this.orbitPts = [];
       for (let i = 0; i < tuning.count; i++) {
-        const a = this.orbitT * bspd + (i * Math.PI * 2) / tuning.count;
+        const a = this.orbitT * bspd + (i - (tuning.count - 1) / 2) * spacing;
         const bx = this.px + Math.cos(a) * tuning.radius;
         const by = this.py - 8 + Math.sin(a) * tuning.radius * 0.82;
-        this.orbitPts.push({ x: bx, y: by, ev });
+        this.orbitPts.push({ x: bx, y: by, ev, fx: tuning.fx });
         for (const e of this.enemies) {
           if (e.dead || e.bladeCd > 0) continue;
-          if (dist2(e.x, e.y, bx, by) < (e.r + (ev ? 22 : 15)) * (e.r + (ev ? 22 : 15))) {
+          if (dist2(e.x, e.y, bx, by) < (e.r + bladeR) * (e.r + bladeR)) {
             e.bladeCd = tuning.cooldown;
             const ka = Math.atan2(e.y - this.py, e.x - this.px);
             this.damageEnemy(e, dmg, e.boss ? 0 : Math.cos(ka) * 10, e.boss ? 0 : Math.sin(ka) * 10);
           }
         }
       }
+      // Từ bậc 4 lưỡi kiếm kéo theo vệt sáng cho đòn quét dày và bắt mắt hơn.
+      if (tuning.fx >= 1.5 && Math.random() < dt * 26) {
+        const p = this.orbitPts[Math.floor(Math.random() * this.orbitPts.length)];
+        this.trails.push({
+          x: p.x, y: p.y, life: 0.2, maxLife: 0.2,
+          size: 4 * tuning.fx, color: ev ? this.weaponSkin.glow : this.weaponSkin.blade,
+        });
+      }
     } else {
-      this.orbitBlades = null;
       this.orbitPts = [];
     }
 
@@ -1229,13 +1439,11 @@ export class Engine {
     for (const f of this.frosts) {
       f.t += dt / f.dur;
       if (f.t >= 1) {
-        this.ring(f.x, f.ty, 8, f.aoe, 0.35, "#7fd4ff", 4);
-        this.burst(f.x, f.ty, 8, "#bff3ff", 140);
-        for (const e of this.enemies) {
-          if (!e.dead && dist2(e.x, e.y, f.x, f.ty) < (f.aoe + e.r) * (f.aoe + e.r)) {
-            this.damageEnemy(e, f.dmg);
-            e.slow = Math.max(e.slow, this.skills.frost.evolved ? 3 : 1.8);
-          }
+        this.ring(f.x, f.ty, 8, f.aoe, 0.35, "#7fd4ff", 3 + f.fx, f.fx >= 1.6 ? 2 : 1);
+        this.burst(f.x, f.ty, Math.round(7 * f.fx), "#bff3ff", 140);
+        for (const e of this.targetsInArc(f.x, f.ty, f.aoe, Math.PI * 2, 0, f.maxTargets)) {
+          this.damageEnemy(e, f.dmg);
+          e.slow = Math.max(e.slow, this.skills.frost.evolved ? 3 : 1.8);
         }
         sfx.hit();
       }
@@ -1323,6 +1531,10 @@ export class Engine {
           sfx.core();
           this.dmgNum(p.x, p.y, "LÕI TIẾN HÓA!", "#ff9d2e", 15);
           this.ring(p.x, p.y, 6, 60, 0.4, "#ff9d2e", 4);
+        } else if (p.kind === "shard" && p.skill) {
+          const [bright] = this.shardColors(p.skill);
+          this.dmgNum(p.x, p.y, `+1 mảnh ${skillDef(p.skill).name}`, bright, 13);
+          this.collectShard(p.skill);
         } else {
           this.hp = clamp(this.hp + p.val, 1, this.maxHp);
           sfx.heal();
@@ -1363,8 +1575,6 @@ export class Engine {
       this.pushHud();
     }
   }
-
-  private orbitBlades: { n: number; radius: number; dmg: number; bspd: number; ev: boolean } | null = null;
 
   private updateBoss(e: Enemy, dt: number) {
     const info = e.boss!;
@@ -1535,6 +1745,8 @@ export class Engine {
       r.r += (r.maxR - r.r) * Math.min(1, dt * 12);
     }
     this.rings = capFx(this.rings.filter((r) => r.life > 0), 80);
+    for (const s of this.sweeps) s.life -= dt;
+    this.sweeps = capFx(this.sweeps.filter((s) => s.life > 0), 24);
     for (const trail of this.trails) trail.life -= dt;
     this.trails = capFx(this.trails.filter((trail) => trail.life > 0), 180);
     for (const telegraph of this.telegraphs) telegraph.life -= dt;
@@ -1546,11 +1758,15 @@ export class Engine {
       if (type === "snow" || type === "ash") {
         a.y += (16 + a.ph % 8) * dt;
         a.x += Math.sin(a.ph * 1.4) * 12 * dt;
-      } else if (type === "ember" || type === "bubble") {
+      } else if (type === "ember" || type === "bubble" || type === "spore") {
         a.y -= 22 * dt;
         a.x += Math.sin(a.ph * 2) * 14 * dt;
       } else if (type === "sand") {
         a.x += 60 * dt;
+      } else if (type === "petal") {
+        // Cánh hoa rơi chậm và đảo qua lại như bị gió cuốn.
+        a.y += 26 * dt;
+        a.x += Math.sin(a.ph * 1.1) * 34 * dt;
       } else {
         a.x += a.vx * dt;
         a.y += a.vy * dt + Math.sin(a.ph * 2) * 6 * dt;
@@ -1570,6 +1786,7 @@ export class Engine {
     this.dmgs = [];
     this.zaps = [];
     this.rings = [];
+    this.sweeps = [];
     this.trails = [];
     this.telegraphs = [];
     this.frosts = [];
@@ -1623,6 +1840,7 @@ export class Engine {
     drawList.sort((a, b) => a.y - b.y);
     for (const d of drawList) d.fn();
 
+    this.drawSweeps(ctx);
     this.drawTrails(ctx);
     this.drawShots(ctx);
     this.drawOrbit(ctx);
@@ -1802,6 +2020,31 @@ export class Engine {
           ctx.fillRect(x - 10, y - 4, 4, 8);
           ctx.fillRect(x + 6, y - 4, 4, 8);
           break;
+        case "vine":
+          ctx.fillStyle = "#3f7a3a";
+          ctx.fillRect(x - 1, y - 22, 3, 22);
+          ctx.fillStyle = "#5aa04f";
+          ctx.fillRect(x - 7, y - 18, 6, 3);
+          ctx.fillRect(x + 2, y - 13, 6, 3);
+          ctx.fillRect(x - 7, y - 8, 6, 3);
+          break;
+        case "coral":
+          ctx.fillStyle = "#e8607f";
+          ctx.fillRect(x - 2, y - 14, 4, 14);
+          ctx.fillRect(x - 8, y - 10, 4, 10);
+          ctx.fillRect(x + 4, y - 12, 4, 12);
+          ctx.fillStyle = "#ffa0b8";
+          ctx.fillRect(x - 1, y - 16, 2, 3);
+          ctx.fillRect(x + 5, y - 14, 2, 3);
+          break;
+        case "obelisk":
+          ctx.fillStyle = "#6a6258";
+          ctx.fillRect(x - 6, y - 30, 12, 30);
+          ctx.fillStyle = "#8a8177";
+          ctx.fillRect(x - 4, y - 28, 5, 26);
+          ctx.fillStyle = hexToRgba("#9be8ff", 0.75);
+          ctx.fillRect(x - 2, y - 22, 4, 6);
+          break;
         default:
           // cloudpuff
           ctx.fillStyle = hexToRgba("#ffffff", 0.75);
@@ -1822,6 +2065,18 @@ export class Engine {
       ctx.fillRect(x - 5, Math.round(p.y) + 7, 10, 3);
       if (p.kind === "xp") {
         ctx.drawImage(getItemSprite("gem"), x - 7, y - 8, 14, 14);
+      } else if (p.kind === "shard" && p.skill) {
+        const [bright, dark] = this.shardColors(p.skill);
+        const spin = Math.sin(p.t * 3) * 0.5;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(spin);
+        ctx.fillStyle = hexToRgba(bright, 0.22);
+        ctx.beginPath();
+        ctx.arc(0, 0, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.drawImage(getShardSprite(bright, dark), -8, -8, 16, 16);
+        ctx.restore();
       } else if (p.kind === "core") {
         const pulse = 1 + Math.sin(p.t * 7) * 0.14;
         const s = 20 * pulse;
@@ -1987,14 +2242,19 @@ export class Engine {
       const x = Math.round(s.x);
       const y = Math.round(s.y);
       if (s.kind === "bolt") {
-        const size = s.evolved ? 16 : 10;
+        const size = 9 * s.fx;
+        const thick = 2 + s.fx;
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(Math.atan2(s.vy, s.vx));
+        if (s.fx >= 1.5) {
+          ctx.fillStyle = hexToRgba(s.evolved ? wc.glow : wc.bolt, 0.22);
+          ctx.fillRect(-size * 1.25, -thick * 1.9, size * 2.5, thick * 3.8);
+        }
         ctx.fillStyle = s.evolved ? wc.glow : wc.bolt;
-        ctx.fillRect(-size, -3, size * 2, 6);
+        ctx.fillRect(-size, -thick, size * 2, thick * 2);
         ctx.fillStyle = s.evolved ? "#fff3d0" : wc.core;
-        ctx.fillRect(-size + 3, -1.5, size * 1.4, 3);
+        ctx.fillRect(-size + 3, -thick * 0.5, size * 1.4, thick);
         if (s.evolved) {
           ctx.fillStyle = "#ff8080";
           ctx.fillRect(size - 6, -6, 6, 12);
@@ -2004,10 +2264,17 @@ export class Engine {
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(s.spin);
-        const L = s.evolved ? 24 : 16;
+        const L = 14 * s.fx;
+        const thick = 2 + s.fx;
+        if (s.fx >= 1.5) {
+          ctx.fillStyle = hexToRgba(s.evolved ? wc.glow : wc.blade, 0.2);
+          ctx.beginPath();
+          ctx.arc(0, 0, L * 0.95, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.fillStyle = s.evolved ? wc.glow : wc.blade;
-        ctx.fillRect(-L, -3, L, 6);
-        ctx.fillRect(3, -L, L, 6);
+        ctx.fillRect(-L, -thick, L, thick * 2);
+        ctx.fillRect(3, -L, L, thick * 2);
         ctx.fillStyle = wc.blade2;
         ctx.fillRect(-4, -4, 8, 8);
         ctx.restore();
@@ -2034,21 +2301,22 @@ export class Engine {
     const wc = this.weaponSkin;
     const t = performance.now() / 90;
     for (const p of this.orbitPts) {
-      if (p.ev) {
-        ctx.fillStyle = hexToRgba(wc.glow, 0.22);
+      if (p.ev || p.fx >= 1.5) {
+        ctx.fillStyle = hexToRgba(p.ev ? wc.glow : wc.aura, 0.2);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, 10 * p.fx, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(t + p.x * 0.04);
-      const L = p.ev ? 17 : 11;
+      const L = 10 * p.fx;
+      const thick = 2 + p.fx;
       ctx.fillStyle = wc.blade;
-      ctx.fillRect(-L, -3, L * 2, 6);
-      ctx.fillRect(-3, -L, 6, L * 2);
+      ctx.fillRect(-L, -thick, L * 2, thick * 2);
+      ctx.fillRect(-thick, -L, thick * 2, L * 2);
       ctx.fillStyle = wc.blade2;
-      ctx.fillRect(-L + 3, -1.5, L * 2 - 6, 3);
+      ctx.fillRect(-L + 3, -thick * 0.5, L * 2 - 6, thick);
       ctx.restore();
     }
   }
@@ -2071,11 +2339,62 @@ export class Engine {
   private drawRings(ctx: CanvasRenderingContext2D) {
     for (const r of this.rings) {
       const a = clamp(r.life * 2.4, 0, 1);
-      ctx.strokeStyle = hexToRgba(r.color, a * 0.9);
-      ctx.lineWidth = r.width;
+      // Bậc càng cao vòng càng nhiều lớp: một quầng ngoài mờ và các vòng trong đậm dần.
+      for (let layer = r.layers - 1; layer >= 0; layer--) {
+        const spread = layer * 7;
+        ctx.strokeStyle = hexToRgba(r.color, a * 0.9 * (layer === 0 ? 1 : 0.32 / layer));
+        ctx.lineWidth = r.width + layer * 3;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, Math.max(1, r.r + spread), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /**
+   * Vệt quét rẻ quạt của hào quang: bậc 1 chỉ là nửa vòng trước mặt, bậc cao hơn
+   * khép kín 360 độ và có thêm quầng sáng bên trong.
+   */
+  private drawSweeps(ctx: CanvasRenderingContext2D) {
+    for (const s of this.sweeps) {
+      const k = clamp(s.life / s.maxLife, 0, 1);
+      const radius = s.radius * (0.82 + (1 - k) * 0.18);
+      const from = s.angle - s.arc / 2;
+      const to = s.angle + s.arc / 2;
+      ctx.save();
+      const grad = ctx.createRadialGradient(s.x, s.y, Math.max(1, radius * 0.15), s.x, s.y, radius);
+      grad.addColorStop(0, hexToRgba(s.glow, 0.05 * k));
+      grad.addColorStop(0.62, hexToRgba(s.color, 0.2 * k * s.fx));
+      grad.addColorStop(1, hexToRgba(s.color, 0.04 * k));
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      if (s.arc >= Math.PI * 2) {
+        ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(s.x, s.y);
+        ctx.arc(s.x, s.y, radius, from, to);
+        ctx.closePath();
+      }
+      ctx.fill();
+      ctx.strokeStyle = hexToRgba(s.glow, 0.55 * k);
+      ctx.lineWidth = 2 + s.fx;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, radius, from, to);
       ctx.stroke();
+      // Từ bậc 4 thêm những nan quạt sáng cho đòn quét dày và có nhịp hơn.
+      if (s.fx >= 1.5) {
+        const spokes = Math.round(4 + s.fx * 3);
+        ctx.strokeStyle = hexToRgba(s.glow, 0.3 * k);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = 0; i < spokes; i++) {
+          const a = from + ((to - from) * i) / Math.max(1, spokes - 1);
+          ctx.moveTo(s.x + Math.cos(a) * radius * 0.42, s.y + Math.sin(a) * radius * 0.42);
+          ctx.lineTo(s.x + Math.cos(a) * radius, s.y + Math.sin(a) * radius);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
     }
   }
 
@@ -2115,11 +2434,17 @@ export class Engine {
     const type = this.biome.ambient.type;
     for (const a of this.ambients) {
       if (a.x < cx - 20 || a.x > cx + vw + 20 || a.y < cy - 20 || a.y > cy + vh + 20) continue;
-      const tw = type === "firefly" || type === "sparkle" || type === "wisp" ? 0.4 + 0.6 * Math.abs(Math.sin(a.ph * 2)) : 0.7;
+      const twinkles = type === "firefly" || type === "sparkle" || type === "wisp" || type === "spore";
+      const tw = twinkles ? 0.4 + 0.6 * Math.abs(Math.sin(a.ph * 2)) : 0.7;
       ctx.globalAlpha = 0.65 * tw;
       ctx.fillStyle = col;
-      const s = type === "mist" ? 26 : type === "snow" || type === "ash" ? 4 : 3;
-      ctx.fillRect(a.x - s / 2, a.y - s / 2, s, s);
+      const s = type === "mist" ? 26 : type === "petal" ? 5 : type === "snow" || type === "ash" ? 4 : 3;
+      if (type === "petal") {
+        // Cánh hoa vẽ hơi dẹt và nghiêng theo pha dao động.
+        ctx.fillRect(a.x - s / 2, a.y - s / 4 + Math.sin(a.ph) * 1.5, s, s / 2);
+      } else {
+        ctx.fillRect(a.x - s / 2, a.y - s / 2, s, s);
+      }
     }
     ctx.globalAlpha = 1;
   }

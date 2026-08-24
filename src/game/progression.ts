@@ -10,13 +10,19 @@ import type {
   PassiveId,
   SkillId,
 } from "./data";
+import { MAX_SKILL_TIER, shardNeed } from "./balance";
 
 export interface ProgressionState {
   skills: Record<SkillId, { lv: number; evolved: boolean }>;
   passives: Record<PassiveId, number>;
   masteries: Record<MasteryId, number>;
+  /** Mảnh vũ khí đã gom cho từng chiêu, đủ ngưỡng thì tự lên bậc. */
+  shards: Record<SkillId, number>;
   cores: number;
 }
+
+/** Bậc tiến hóa mở khóa từ bậc 5 trở lên, khi trong tay có lõi. */
+export const EVOLVE_TIER = 5;
 
 interface WeightedChoice {
   choice: Choice;
@@ -35,8 +41,68 @@ export function createInitialProgression(): ProgressionState {
     },
     passives: { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 },
     masteries: { force: 0, vitality: 0, swiftness: 0, vacuum: 0 },
+    shards: { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 },
     cores: 0,
   };
+}
+
+const cloneState = (state: ProgressionState): ProgressionState => ({
+  skills: Object.fromEntries(
+    Object.entries(state.skills).map(([id, skill]) => [id, { ...skill }]),
+  ) as ProgressionState["skills"],
+  passives: { ...state.passives },
+  masteries: { ...state.masteries },
+  shards: { ...state.shards },
+  cores: state.cores,
+});
+
+/** Những chiêu đang sở hữu và chưa chạm bậc tối đa mới nhận được mảnh. */
+export function shardTargets(state: ProgressionState): SkillId[] {
+  return (Object.keys(state.skills) as SkillId[]).filter(
+    (id) => state.skills[id].lv > 0 && state.skills[id].lv < MAX_SKILL_TIER,
+  );
+}
+
+/**
+ * Chọn chiêu sẽ rơi mảnh: ưu tiên chiêu đang ở bậc thấp nhất để người chơi
+ * không bị kẹt với một vũ khí èo uột suốt trận.
+ */
+export function pickShardTarget(
+  state: ProgressionState,
+  rng: () => number = Math.random,
+): SkillId | null {
+  const targets = shardTargets(state);
+  if (targets.length === 0) return null;
+  const lowest = Math.min(...targets.map((id) => state.skills[id].lv));
+  const preferred = targets.filter((id) => state.skills[id].lv === lowest);
+  const pool = rng() < 0.65 ? preferred : targets;
+  const index = Math.floor(Math.max(0, Math.min(0.999999999, rng())) * pool.length);
+  return pool[index];
+}
+
+export interface ShardResult {
+  state: ProgressionState;
+  /** Bậc mới nếu vừa lên bậc, còn không thì null. */
+  tierUp: number | null;
+}
+
+/** Cộng mảnh cho một chiêu; đủ ngưỡng thì trừ mảnh và lên một bậc. */
+export function grantShard(state: ProgressionState, id: SkillId, amount = 1): ShardResult {
+  const next = cloneState(state);
+  const skill = next.skills[id];
+  if (skill.lv <= 0 || skill.lv >= MAX_SKILL_TIER) return { state: next, tierUp: null };
+
+  next.shards[id] += Math.max(1, Math.floor(amount));
+  let tierUp: number | null = null;
+  let need = shardNeed(skill.lv);
+  while (need > 0 && next.shards[id] >= need && skill.lv < MAX_SKILL_TIER) {
+    next.shards[id] -= need;
+    skill.lv += 1;
+    tierUp = skill.lv;
+    need = shardNeed(skill.lv);
+  }
+  if (skill.lv >= MAX_SKILL_TIER) next.shards[id] = 0;
+  return { state: next, tierUp };
 }
 
 const weightedIndex = (pool: WeightedChoice[], rng: () => number) => {
@@ -74,7 +140,7 @@ export function rollChoices(state: ProgressionState, rng: () => number = Math.ra
   if (state.cores > 0) {
     for (const id of Object.keys(state.skills) as SkillId[]) {
       const skill = state.skills[id];
-      if (skill.lv >= 5 && !skill.evolved) {
+      if (skill.lv >= EVOLVE_TIER && !skill.evolved) {
         const def = skillDef(id);
         add({
           kind: "evolve",
@@ -91,16 +157,16 @@ export function rollChoices(state: ProgressionState, rng: () => number = Math.ra
   const finitePool: WeightedChoice[] = [];
   for (const id of Object.keys(state.skills) as SkillId[]) {
     const skill = state.skills[id];
-    if (skill.lv > 0 && skill.lv < 8 && !used.has(`evolve:${id}`)) {
+    if (skill.lv > 0 && skill.lv < MAX_SKILL_TIER && !used.has(`evolve:${id}`)) {
       const def = skillDef(id);
       finitePool.push({
         choice: {
           kind: "up",
           id,
           name: skill.evolved ? def.evoName : def.name,
-          desc: def.desc,
+          desc: def.tiers[skill.lv] ?? def.desc,
           icon: def.icon,
-          tag: `Cấp ${skill.lv} → ${skill.lv + 1}`,
+          tag: `Bậc ${skill.lv} → ${skill.lv + 1}`,
         },
         weight: 3,
       });
@@ -193,17 +259,15 @@ export function rollChoices(state: ProgressionState, rng: () => number = Math.ra
 }
 
 export function applyChoice(state: ProgressionState, choice: Choice): ProgressionState {
-  const next: ProgressionState = {
-    skills: Object.fromEntries(
-      Object.entries(state.skills).map(([id, skill]) => [id, { ...skill }]),
-    ) as ProgressionState["skills"],
-    passives: { ...state.passives },
-    masteries: { ...state.masteries },
-    cores: state.cores,
-  };
+  const next = cloneState(state);
 
   if (choice.kind === "new") next.skills[choice.id as SkillId].lv = 1;
-  if (choice.kind === "up") next.skills[choice.id as SkillId].lv += 1;
+  if (choice.kind === "up") {
+    const skill = next.skills[choice.id as SkillId];
+    skill.lv = Math.min(MAX_SKILL_TIER, skill.lv + 1);
+    // Chạm bậc tối đa thì mảnh gom dở không còn chỗ dùng, dọn luôn cho thanh HUD sạch.
+    if (skill.lv >= MAX_SKILL_TIER) next.shards[choice.id as SkillId] = 0;
+  }
   if (choice.kind === "evolve") {
     next.skills[choice.id as SkillId].evolved = true;
     next.cores = Math.max(0, next.cores - 1);

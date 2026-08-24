@@ -165,17 +165,39 @@ export function HUD({
         className={`absolute flex gap-1.5 flex-wrap max-w-[60vw] ${touch ? "top-[214px] left-3" : "bottom-3 left-3"}`}
         style={touch ? { top: "calc(214px + env(safe-area-inset-top))" } : undefined}
       >
-        {hud.skills.map((s) => (
-          <div
-            key={s.id}
-            title={`${s.name} — Cấp ${s.lv}`}
-            className={`skill-chip panel-deep ${touch ? "w-[42px] h-[42px]" : "w-[52px] h-[52px]"} flex flex-col items-center justify-center relative ${s.evolved ? "evolved" : ""}`}
-          >
-            <Icon name={s.icon} className={`${touch ? "w-5 h-5" : "w-6 h-6"} ${s.evolved ? "text-[#ffd94a]" : "text-[#ffe9b8]"}`} />
-            <span className="absolute bottom-0.5 right-1 text-[10px] font-bold text-[#7ce06a]">{s.lv}</span>
-            {s.evolved && <Icon name="crown" className="absolute -top-2 -right-1 w-4 h-4 text-[#ffd94a]" />}
-          </div>
-        ))}
+        {hud.skills.map((s) => {
+          const maxed = s.lv >= s.maxLv;
+          const shardPct = s.shardNeed > 0 ? Math.min(100, (s.shards / s.shardNeed) * 100) : 100;
+          return (
+            <div
+              key={s.id}
+              title={
+                maxed
+                  ? `${s.name} — Bậc ${s.lv}/${s.maxLv} (tối đa)`
+                  : `${s.name} — Bậc ${s.lv}/${s.maxLv} • mảnh ${s.shards}/${s.shardNeed}`
+              }
+              className={`skill-chip panel-deep ${touch ? "w-[42px] h-[46px]" : "w-[52px] h-[58px]"} flex flex-col items-center justify-center relative ${s.evolved ? "evolved" : ""}`}
+            >
+              <Icon name={s.icon} className={`${touch ? "w-5 h-5" : "w-6 h-6"} ${s.evolved ? "text-[#ffd94a]" : "text-[#ffe9b8]"}`} />
+              <span className={`absolute top-0.5 right-1 text-[10px] font-bold ${maxed ? "text-[#ffd94a]" : "text-[#7ce06a]"}`}>
+                {s.lv}
+              </span>
+              {/* Thanh mảnh vũ khí: đầy là lên một bậc mới */}
+              <div className="absolute bottom-[3px] left-[4px] right-[4px] h-[4px] bg-[#2c1a0c] border border-[#6b4423]">
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${shardPct}%`,
+                    background: maxed
+                      ? "linear-gradient(180deg,#ffe08a,#d9932a)"
+                      : "linear-gradient(180deg,#9beaff,#2f8fb5)",
+                  }}
+                />
+              </div>
+              {s.evolved && <Icon name="crown" className="absolute -top-2 -right-1 w-4 h-4 text-[#ffd94a]" />}
+            </div>
+          );
+        })}
       </div>
 
       {/* phải dưới: hướng dẫn (chỉ desktop) */}
@@ -349,8 +371,8 @@ export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onS
         <p className="mt-6 text-[15px] md:text-base text-[#d9bd8a] leading-relaxed max-w-md">
           Một mình giữa thung lũng, <b className="text-[#ffe9b8]">di chuyển bằng WASD</b> (hoặc cần ảo trên điện thoại) — nhân vật{" "}
           <b className="text-[#ffe9b8]">tự ra chiêu</b>. Dọn 3 đợt quái mỗi màn, hạ trùm, nhặt{" "}
-          <b className="text-[#63e6ff]">mảnh kỹ năng</b> và <b className="text-[#ff9d2e]">lõi tiến hóa</b>, cày{" "}
-          <b className="text-[#ffd94a]">vàng</b> sắm skin chất chơi.
+          <b className="text-[#63e6ff]">mảnh vũ khí</b> để lên bậc và <b className="text-[#ff9d2e]">lõi tiến hóa</b> để hóa
+          tuyệt kỹ, cày <b className="text-[#ffd94a]">vàng</b> sắm skin chất chơi.
         </p>
         <div className="mt-8 flex items-center gap-4 flex-wrap">
           <button onClick={onStart} className="btn text-xl flex items-center gap-3">
@@ -404,9 +426,16 @@ export function MenuScreen({ onStart, onShop, gold }: { onStart: () => void; onS
               </span>
             </li>
             <li className="flex items-center gap-2.5">
+              <Icon name="shard" className="w-5 h-5 text-[#63e6ff] shrink-0" />
+              <span>
+                Gom <b className="text-[#63e6ff]">mảnh vũ khí</b> rơi ra để lên bậc — mỗi vũ khí{" "}
+                <b className="text-[#ffe9b8]">6 bậc</b>, bậc càng cao thì sát thương, độ phủ và số quái dính đòn càng lớn
+              </span>
+            </li>
+            <li className="flex items-center gap-2.5">
               <Icon name="crown" className="w-5 h-5 text-[#ffd94a] shrink-0" />
               <span>
-                Kỹ năng cấp 5 + lõi = <b className="text-[#ffd94a]">TIẾN HÓA</b> thành tuyệt kỹ
+                Vũ khí bậc 5 + lõi = <b className="text-[#ffd94a]">TIẾN HÓA</b> thành tuyệt kỹ
               </span>
             </li>
           </ul>

@@ -43,6 +43,8 @@ export function Icon({ name, className = "w-5 h-5" }: IconProps) {
     wave: <path d="M2 12c2.5 0 2.5-4 5-4s2.5 4 5 4 2.5-4 5-4 2.5 4 5 4v4c-2.5 0-2.5-4-5-4s-2.5 4-5 4-2.5-4-5-4-2.5 4-5 4z" />,
     arrow: <path d="M4 10h10V5l8 7-8 7v-5H4z" />,
     wasd: <path d="M8 2h8v8H8zm0 2v4h4V4zM2 12h8v8H2zm0 2v4h4v-4zm12 0h8v8h-8zm0 2v4h4v-4z" />,
+    shield: <path d="M12 1L3 4v8c0 5.4 3.8 9.6 9 11 5.2-1.4 9-5.6 9-11V4zm0 2.2l7 2.3V12c0 4.2-2.8 7.6-7 8.9-4.2-1.3-7-4.7-7-8.9V5.5z" />,
+    shard: <path d="M14 1l7 6-3 3 2 5-6 8-3-7-6-2 4-4-2-6z" />,
   };
   return (
     <svg

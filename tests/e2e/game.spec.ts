@@ -74,7 +74,7 @@ test("menu, shop, movement and pause form a complete desktop smoke path", async 
   await expect(page.getByText("TẠM DỪNG", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /TIẾP TỤC/ }).click();
   await expect(page.getByText("TẠM DỪNG", { exact: true })).toBeHidden();
-  expect(await sampleFps(page)).toBeGreaterThanOrEqual(58);
+  expect(await sampleFps(page)).toBeGreaterThanOrEqual(60);
 });
 
 test("held touch input survives HUD updates and mobile stays at 60 FPS", async ({ browser }) => {
@@ -100,7 +100,7 @@ test("held touch input survives HUD updates and mobile stays at 60 FPS", async (
   expect(await knob.evaluate((node) => getComputedStyle(node).transform)).toBe(heldTransform);
   await page.mouse.up();
 
-  expect(await sampleFps(page)).toBeGreaterThanOrEqual(58);
+  expect(await sampleFps(page)).toBeGreaterThanOrEqual(60);
   await context.close();
 });
 

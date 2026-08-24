@@ -66,8 +66,10 @@ export interface BossStats {
 
 export function bossStats(stage: number, king: boolean): BossStats {
   const s = stageValue(stage);
+  const campaignHpScale = 1 + Math.max(0, s - 20) * 0.0375;
+  const kingHpScale = king ? 1.65 - ((s - 1) / (MAX_STAGE - 1)) * 0.45 : 1;
   return {
-    hp: Math.floor(300 * s * (1 + s * 0.03) * (king ? 1.65 : 1)),
+    hp: Math.floor(300 * s * (1 + s * 0.03) * campaignHpScale * kingHpScale),
     dmg: Math.floor((10 + s * 0.72 + s * s * 0.0036) * (king ? 1 : 0.94)),
     speed: 52 + Math.min(52, s * 0.62) + (king ? 8 : 0),
   };

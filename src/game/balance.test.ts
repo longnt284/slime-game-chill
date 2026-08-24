@@ -61,9 +61,9 @@ describe("stage balance", () => {
     expect(frost.cooldown).toBeCloseTo(0.92, 8);
     expect(bossAttackTiming(100, true, 1)).toEqual({ cooldown: 1.2, warning: 0.55, pulse: 0 });
 
-    const lateDps = projectedMaxBuildDps(2, Math.pow(0.92, 5));
+    const lateDps = projectedMaxBuildDps(2.6, Math.pow(0.92, 5));
     const finalBossSeconds = bossStats(100, true).hp / lateDps;
-    expect(finalBossSeconds).toBeGreaterThan(12);
+    expect(finalBossSeconds).toBeGreaterThan(25);
     expect(finalBossSeconds).toBeLessThan(45);
   });
 

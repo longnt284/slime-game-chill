@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialProgression, rollChoices } from "./progression";
+import { applyChoice, createInitialProgression, rollChoices } from "./progression";
 
 describe("upgrade choices", () => {
   it("offers three distinct choices at the start of a run", () => {
@@ -34,5 +34,21 @@ describe("upgrade choices", () => {
 
     expect(choices).toHaveLength(3);
     expect(choices.every((choice) => choice.kind === "mastery")).toBe(true);
+  });
+
+  it("applies a mastery without mutating the previous progression state", () => {
+    const state = createInitialProgression();
+
+    const next = applyChoice(state, {
+      kind: "mastery",
+      id: "force",
+      name: "Uy Lực",
+      desc: "+3% sát thương",
+      icon: "power",
+      tag: "Tinh thông 0 → 1",
+    });
+
+    expect(next.masteries.force).toBe(1);
+    expect(state.masteries.force).toBe(0);
   });
 });

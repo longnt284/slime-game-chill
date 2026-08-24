@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bossReward,
+  bossProjectileDamage,
   bossStats,
   mobDmg,
   mobHp,
@@ -36,6 +37,11 @@ describe("stage balance", () => {
 
   it("awards exactly one guaranteed evolution core per boss", () => {
     expect(bossReward(1)).toEqual({ gold: 114, cores: 1 });
+    expect(bossReward(37).cores).toBe(1);
     expect(bossReward(100)).toEqual({ gold: 510, cores: 1 });
+  });
+
+  it("keeps final-boss projectile damage below half of upgraded base health", () => {
+    expect(bossProjectileDamage(100, true)).toBe(59);
   });
 });

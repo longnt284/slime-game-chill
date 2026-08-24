@@ -3,10 +3,14 @@ import { getHeroSprite, getMobSprite, getItemSprite } from "./sprites";
 import type { MobColors, MobKind } from "./sprites";
 import { HERO_SKINS, WEAPON_SKINS } from "./shop";
 import type { HeroSkinDef, WeaponSkinDef } from "./shop";
+import { bossProjectileDamage, bossReward } from "./balance";
+import {
+  applyChoice as applyProgressionChoice,
+  createInitialProgression,
+  rollChoices as buildChoices,
+} from "./progression";
 import {
   BIOMES,
-  SKILLS,
-  PASSIVES,
   WORLD,
   TOTAL_STAGES,
   biomeOf,
@@ -19,10 +23,9 @@ import {
   gemValue,
   waveQuota,
   skillDef,
-  passiveDef,
   ARCH_NAMES,
 } from "./data";
-import type { BossInfo, Choice, SkillId, PassiveId, Biome } from "./data";
+import type { BossInfo, Choice, SkillId, PassiveId, MasteryId, Biome } from "./data";
 
 export type Phase = "menu" | "playing" | "paused" | "levelup" | "stageclear" | "gameover" | "victory";
 
@@ -268,6 +271,7 @@ export class Engine {
     frost: { lv: 0, evolved: false },
   };
   private passives: Record<PassiveId, number> = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
+  private masteries: Record<MasteryId, number> = { force: 0, vitality: 0, swiftness: 0, vacuum: 0 };
   private cds: Record<SkillId, number> = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
   private orbitT = 0;
   private choices: Choice[] = [];
@@ -372,6 +376,7 @@ export class Engine {
   /* ============ public API ============ */
   start() {
     sfx.unlock();
+    const progression = createInitialProgression();
     this.stage = 1;
     this.level = 1;
     this.xp = 0;
@@ -383,11 +388,15 @@ export class Engine {
     this.goldT = 0;
     this.joy = { x: 0, y: 0, active: false };
     this.totalTime = 0;
-    this.passives = { speed: 0, heart: 0, power: 0, haste: 0, magnet: 0, regen: 0 };
-    (Object.keys(this.skills) as SkillId[]).forEach((k) => {
-      this.skills[k] = { lv: 0, evolved: false };
-    });
-    this.skills.bolt = { lv: 1, evolved: false };
+    this.skills = progression.skills;
+    this.passives = progression.passives;
+    this.masteries = progression.masteries;
+    this.cds = { bolt: 0, orbit: 0, aura: 0, zap: 0, boom: 0, frost: 0 };
+    this.regenAcc = 0;
+    this.orbitT = 0;
+    this.orbitPts = [];
+    this.keys.clear();
+    this.hudT = 0;
     this.maxHp = 100;
     this.hp = 100;
     this.px = WORLD / 2;
@@ -472,23 +481,28 @@ export class Engine {
     const c = this.choices[i];
     if (!c) return;
     sfx.click();
-    if (c.kind === "new") {
-      this.skills[c.id as SkillId].lv = 1;
-    } else if (c.kind === "up") {
-      this.skills[c.id as SkillId].lv++;
-    } else if (c.kind === "evolve") {
-      this.skills[c.id as SkillId].evolved = true;
-      this.cores = Math.max(0, this.cores - 1);
+    const progression = applyProgressionChoice({
+      skills: this.skills,
+      passives: this.passives,
+      masteries: this.masteries,
+      cores: this.cores,
+    }, c);
+    this.skills = progression.skills;
+    this.passives = progression.passives;
+    this.masteries = progression.masteries;
+    this.cores = progression.cores;
+
+    if (c.kind === "evolve") {
       sfx.evolve();
       this.ring(this.px, this.py, 10, 160, 0.6, "#ffd94a", 6);
       this.burst(this.px, this.py, 26, "#ffd94a", 220);
       this.shake = Math.max(this.shake, 6);
-    } else if (c.kind === "passive") {
-      this.passives[c.id as PassiveId]++;
-      if (c.id === "heart") {
-        this.maxHp += 22;
-        this.hp = clamp(this.hp + 22, 1, this.maxHp);
-      }
+    } else if (c.kind === "passive" && c.id === "heart") {
+      this.maxHp += 22;
+      this.hp = clamp(this.hp + 22, 1, this.maxHp);
+    } else if (c.kind === "mastery" && c.id === "vitality") {
+      this.maxHp += 6;
+      this.hp = clamp(this.hp + 6, 1, this.maxHp);
     } else if (c.kind === "heal") {
       this.hp = clamp(this.hp + this.maxHp * 0.5, 1, this.maxHp);
       sfx.heal();
@@ -560,16 +574,16 @@ export class Engine {
 
   /* ============ derived stats ============ */
   private power() {
-    return 1 + 0.14 * this.passives.power;
+    return 1 + 0.14 * this.passives.power + 0.03 * this.masteries.force;
   }
   private cdr() {
     return Math.pow(0.92, this.passives.haste);
   }
   private magnetR() {
-    return 95 * (1 + 0.4 * this.passives.magnet);
+    return 95 * (1 + 0.4 * this.passives.magnet + 0.06 * this.masteries.vacuum);
   }
   private moveSpeed() {
-    return 252 * (1 + 0.09 * this.passives.speed);
+    return 252 * (1 + 0.09 * this.passives.speed + 0.01 * this.masteries.swiftness);
   }
 
   /* ============ stage build ============ */
@@ -765,11 +779,10 @@ export class Engine {
     this.hitStop = 0.14;
     this.shake = 16;
     sfx.bossDie();
-    const g = 110 + this.stage * 4;
-    this.goldRun += g;
-    this.dmgNum(e.x, e.y - e.r - 10, `+${g} vàng`, "#ffd94a", 19);
-    this.cores++;
-    this.dropPickup(e.x, e.y, "core", 1);
+    const reward = bossReward(this.stage);
+    this.goldRun += reward.gold;
+    this.cores += reward.cores;
+    this.dmgNum(e.x, e.y - e.r - 10, `+${reward.gold} vàng`, "#ffd94a", 19);
     for (let i = 0; i < 8; i++) this.dropPickup(e.x + rand(-50, 50), e.y + rand(-50, 50), "xp", Math.ceil(e.xp / 6));
     if (Math.random() < 0.5) this.dropPickup(e.x, e.y + 20, "heart", 30);
     this.ebullets = [];
@@ -800,58 +813,12 @@ export class Engine {
 
   /* ============ choices ============ */
   private rollChoices() {
-    const pool: { c: Choice; w: number }[] = [];
-    // tiến hóa (ưu tiên)
-    const evos: Choice[] = [];
-    if (this.cores > 0) {
-      (Object.keys(this.skills) as SkillId[]).forEach((id) => {
-        const s = this.skills[id];
-        if (s.lv >= 5 && !s.evolved) {
-          const d = skillDef(id);
-          evos.push({ kind: "evolve", id, name: d.evoName, desc: d.evoDesc, icon: d.icon, tag: "TIẾN HÓA" });
-        }
-      });
-    }
-    (Object.keys(this.skills) as SkillId[]).forEach((id) => {
-      const s = this.skills[id];
-      if (s.lv > 0 && s.lv < 8) {
-        const d = skillDef(id);
-        pool.push({ c: { kind: "up", id, name: s.evolved ? d.evoName : d.name, desc: d.desc, icon: d.icon, tag: `Cấp ${s.lv} → ${s.lv + 1}` }, w: 3 });
-      }
+    this.choices = buildChoices({
+      skills: this.skills,
+      passives: this.passives,
+      masteries: this.masteries,
+      cores: this.cores,
     });
-    (Object.keys(this.passives) as PassiveId[]).forEach((id) => {
-      if (this.passives[id] < 5) {
-        const d = passiveDef(id);
-        pool.push({ c: { kind: "passive", id, name: d.name, desc: d.desc, icon: d.icon, tag: `Cấp ${this.passives[id]} → ${this.passives[id] + 1}` }, w: 2 });
-      }
-    });
-    const owned = (Object.keys(this.skills) as SkillId[]).filter((k) => this.skills[k].lv > 0).length;
-    if (owned < 6) {
-      SKILLS.filter((s) => this.skills[s.id].lv === 0).forEach((s) => {
-        pool.push({ c: { kind: "new", id: s.id, name: s.name, desc: s.desc, icon: s.icon, tag: "KỸ NĂNG MỚI" }, w: 4 });
-      });
-    }
-    // shuffle weighted
-    const picks: Choice[] = [];
-    const ev = [...evos].sort(() => Math.random() - 0.5);
-    while (picks.length < 3 && ev.length) picks.push(ev.pop()!);
-    const bag = [...pool];
-    while (picks.length < 3 && bag.length) {
-      const total = bag.reduce((s, b) => s + b.w, 0);
-      let r = Math.random() * total;
-      let idx = 0;
-      for (let i = 0; i < bag.length; i++) {
-        r -= bag[i].w;
-        if (r <= 0) {
-          idx = i;
-          break;
-        }
-      }
-      picks.push(bag[idx].c);
-      bag.splice(idx, 1);
-    }
-    if (picks.length === 0) picks.push({ kind: "heal", id: "heal", name: "Bữa Ăn Thịnh Soạn", desc: "Hồi 50% máu tối đa", icon: "heart", tag: "HỒI PHỤC" });
-    this.choices = picks;
   }
 
   private gainXp(v: number) {
@@ -1347,6 +1314,7 @@ export class Engine {
 
   private updateBoss(e: Enemy, dt: number) {
     const info = e.boss!;
+    const bulletDamage = bossProjectileDamage(this.stage, info.king);
     const a = Math.atan2(this.py - e.y, this.px - e.x);
     e.stateT -= dt;
     const cdMul = info.king ? 0.75 : 1;
@@ -1391,7 +1359,7 @@ export class Engine {
           const n = 10 + Math.floor(this.stage / 8);
           for (let i = 0; i < n; i++) {
             const ba = (i / n) * Math.PI * 2 + e.spiralA;
-            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 165, vy: Math.sin(ba) * 165, r: 7, dmg: info.dmg * 0.55, life: 4, color: info.colors.X });
+            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 165, vy: Math.sin(ba) * 165, r: 7, dmg: bulletDamage, life: 4, color: info.colors.X });
           }
           e.spiralA += 0.35;
           sfx.shoot();
@@ -1424,7 +1392,7 @@ export class Engine {
         if (e.tx > 0.13) {
           e.tx = 0;
           for (const off of [0, Math.PI]) {
-            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.spiralA + off) * 185, vy: Math.sin(e.spiralA + off) * 185, r: 6, dmg: info.dmg * 0.5, life: 3.4, color: info.colors.X });
+            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.spiralA + off) * 185, vy: Math.sin(e.spiralA + off) * 185, r: 6, dmg: bulletDamage, life: 3.4, color: info.colors.X });
           }
           if (Math.random() < 0.2) sfx.shoot();
         }
@@ -1451,7 +1419,7 @@ export class Engine {
             const n = 14;
             for (let i = 0; i < n; i++) {
               const ba = (i / n) * Math.PI * 2;
-              this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 210, vy: Math.sin(ba) * 210, r: 7, dmg: info.dmg * 0.6, life: 3, color: info.colors.X });
+              this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(ba) * 210, vy: Math.sin(ba) * 210, r: 7, dmg: bulletDamage, life: 3, color: info.colors.X });
             }
             this.ring(e.x, e.y, 20, 170, 0.5, info.colors.X, 6);
             this.burst(e.x, e.y, 16, info.colors.D, 220);

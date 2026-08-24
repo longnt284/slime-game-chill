@@ -48,6 +48,9 @@ export function bossStats(stage: number, king: boolean): BossStats {
   };
 }
 
+export const bossProjectileDamage = (stage: number, king: boolean) =>
+  Math.floor(bossStats(stage, king).dmg * 0.5);
+
 export const bossReward = (stage: number) => ({
   gold: 110 + stageValue(stage) * 4,
   cores: 1,
